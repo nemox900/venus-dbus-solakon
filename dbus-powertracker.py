@@ -3,8 +3,10 @@
 # Eigener kleiner Prozess, nur lesend, HTTP-API des Lesekopfs (config.ini).
 # Der Lesekopf liefert nur die saldierte Summe, darum genau eine virtuelle
 # Phase L1 (keine echte Phasenmessung, keine Spannungen/Stroeme).
-# In Venus angemeldet nur, wenn /Settings/Solakon/GridMeter = 1 (PowerTracker) ist
-# oder die Einstellung fehlt (dbus-solakon laeuft nicht).
+# Ein normaler Venus-Zaehler: immer angemeldet, Rolle (Netz, PV-Wechselrichter,
+# Generator, Verbraucher) in den Geraete-Einstellungen waehlbar wie bei Victron-
+# Zaehlern oder Shelly. Die Rolle steht in /Settings/Solakon/PowerTrackerRole;
+# bei einer Aenderung startet der Dienst neu und meldet sich unter der neuen Rolle an.
 
 import configparser
 import json
@@ -18,6 +20,7 @@ sys.path.insert(1, "/opt/victronenergy/dbus-systemcalc-py/ext/velib_python")
 import dbus
 import dbus.mainloop.glib
 from gi.repository import GLib
+from settingsdevice import SettingsDevice
 from vedbus import VeDbusService
 
 VERSION = "0.7.0"
@@ -27,54 +30,52 @@ CONFIG.read([os.path.join(BASE, "config.default.ini"), os.path.join(BASE, "confi
 PT_HOST = CONFIG.get("powertracker", "host", fallback="").strip()
 URL = "http://%s/api/v1/status?extended=true" % PT_HOST
 STALE_S = 15    # so lange darf total_rx_bytes stillstehen
-METER_POWERTRACKER = 1
+ROLES = ["grid", "pvinverter", "genset", "acload"]
 
 log = logging.getLogger("dbus-powertracker")
 
 
 class PowerTracker(object):
     def __init__(self):
-        s = self.s = VeDbusService("com.victronenergy.grid.solakon_powertracker",
+        self.sysbus = dbus.SystemBus()
+        self.settings = SettingsDevice(self.sysbus, {
+            "role": ["/Settings/Solakon/PowerTrackerRole", "grid", 0, 0]}, None)
+        role = str(self.settings["role"])
+        if role not in ROLES:
+            role = "grid"
+        s = self.s = VeDbusService("com.victronenergy.%s.solakon_powertracker" % role,
                                    register=False)
         for p, v in (("/Mgmt/ProcessName", __file__), ("/Mgmt/ProcessVersion", VERSION),
                      ("/Mgmt/Connection", "HTTP PowerTracker"), ("/DeviceInstance", 30),
                      ("/ProductId", 0xFFFF), ("/ProductName", "Solakon PowerTracker IR"),
                      ("/CustomName", "Solakon PowerTracker (HTTP)"), ("/FirmwareVersion", None),
                      ("/Serial", None), ("/Connected", 0), ("/DeviceType", None),
-                     ("/Role", "grid"), ("/NrOfPhases", 1), ("/Position", None)):
+                     ("/NrOfPhases", 1), ("/Position", 0 if role == "pvinverter" else None)):
             s.add_path(p, v)
+        s.add_path("/AllowedRoles", dbus.Array(ROLES, signature="s"))
+        s.add_path("/Role", role, writeable=True, onchangecallback=self.set_role)
         for p in ("/Ac/Power", "/Ac/L1/Power", "/Ac/Energy/Forward", "/Ac/Energy/Reverse",
                   "/Ac/L1/Energy/Forward", "/Ac/L1/Energy/Reverse",
                   "/PowerTracker/SignalStrength", "/PowerTracker/Rssi",
                   "/PowerTracker/FirmwareText"):
             s.add_path(p, None)
-        self.sysbus = dbus.SystemBus()
-        self.sync()
+        s.register()
         self.rx = None
         self.rx_t = 0
         GLib.timeout_add(2000, self.tick)
         log.info("PowerTracker-Treiber %s gestartet", VERSION)
 
-    def sync(self):
-        """Je nach Auswahl in den Solakon-Einstellungen an- oder abmelden."""
-        try:
-            sel = self.sysbus.get_object("com.victronenergy.settings",
-                                         "/Settings/Solakon/GridMeter").GetValue(
-                dbus_interface="com.victronenergy.BusItem")
-            want = int(sel) == METER_POWERTRACKER
-        except (dbus.exceptions.DBusException, TypeError, ValueError):
-            want = True
-        if want and self.s._dbusname is None:
-            self.s.register()
-            log.info("Netzzaehler PowerTracker angemeldet")
-        elif not want and self.s._dbusname is not None:
-            self.s._dbusname.__del__()
-            self.s._dbusname = None
-            log.info("Netzzaehler PowerTracker abgemeldet")
+    def set_role(self, path, value):
+        if value not in ROLES:
+            return False
+        self.settings["role"] = value
+        log.info("Rolle -> %s, Neustart", value)
+        # Der Dienstname haengt an der Rolle: neu starten, daemontools startet wieder
+        GLib.timeout_add(500, lambda: os._exit(0))
+        return True
 
     def tick(self):
         try:
-            self.sync()
             self.update()
         except Exception:
             log.exception("Fehler im Zyklus")

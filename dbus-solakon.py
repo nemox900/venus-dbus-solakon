@@ -41,7 +41,6 @@ HOST = CONFIG.get("solakon", "host")
 PORT = CONFIG.getint("solakon", "port")
 UNIT = CONFIG.getint("solakon", "unit")
 CONTROL_ENABLED = CONFIG.getboolean("control", "enabled", fallback=False)
-POWERTRACKER = bool(CONFIG.get("powertracker", "host", fallback="").strip())
 STATE_FILE = os.path.join(BASE, "state.json")
 STALE_S = 10            # so lange duerfen Schnellwerte alt sein
 NOMINAL_V = 35.2        # Datenblatt: Nennspannung, 2,11 kWh je Akkumodul
@@ -62,8 +61,13 @@ SERIAL_SUFFIX = {"battery": "-BAT", "solarcharger.solakon_pv1": "-PV1",
                  "solarcharger.solakon_pv4": "-PV4", "temperature.solakon_wr": "-TWR",
                  "temperature.solakon_gehaeuse": "-TGH", "switch.solakon_ess": "-ESS",
                  "grid.solakon_meter": "-NZ"}
-# /Settings/Solakon/GridMeter: welcher Netzzaehler sich in Venus anmeldet
-METER_SOLAKON, METER_POWERTRACKER, METER_EXTERN = 0, 1, 2
+# /Settings/Solakon/GridMeter: 0 = Solakon-Zaehler (Modbus) meldet sich als Netzzaehler an,
+# 2 = Venus OS nimmt einen eigenen Netzzaehler (PowerTracker, Victron-Zaehler, Shelly ...).
+# 1 war bis 24.10. "PowerTracker" und wird zu 2 (der PowerTracker ist jetzt ein normaler Zaehler).
+METER_SOLAKON, METER_VENUS = 0, 2
+# Venus nimmt von mehreren Netzzaehlern den mit der kleinsten Instanz; andere Zaehler
+# haben ab 30 aufwaerts, damit hat der Solakon-Zaehler Vorrang, wenn er gewaehlt ist.
+METER_INSTANCE = 10
 
 log = logging.getLogger("dbus-solakon")
 
@@ -352,7 +356,7 @@ class Solakon(object):
         # darum eine virtuelle Phase wie beim PowerTracker. Angemeldet nur, wenn er in
         # /Settings/Solakon/GridMeter gewaehlt ist (Venus nimmt sonst den Netzzaehler
         # mit der kleinsten Instanz, die Wahl waere Zufall).
-        m = self.meter = new_service("com.victronenergy.grid.solakon_meter", 31,
+        m = self.meter = new_service("com.victronenergy.grid.solakon_meter", METER_INSTANCE,
                                      "Solakon ONE Netzz\u00e4hler",
                                      "Solakon Netzz\u00e4hler (Modbus)")
         for p, v in (("/Role", "grid"), ("/NrOfPhases", 1), ("/DeviceType", None),
@@ -362,13 +366,12 @@ class Solakon(object):
             m.add_path(p, None)
 
         self.acsystem_named = False
-        if int(self.settings["gridmeter"]) == METER_POWERTRACKER and not POWERTRACKER:
-            log.info("PowerTracker nicht eingerichtet: Netzzaehler -> Solakon (Modbus)")
-            self.settings["gridmeter"] = METER_SOLAKON
+        if int(self.settings["gridmeter"]) not in (METER_SOLAKON, METER_VENUS):
+            self.settings["gridmeter"] = METER_VENUS
         self.all = [self.batt, self.multi] + list(self.pv.values()) + list(self.temp.values()) \
             + [self.meter]
         # Einstell-Geraet: nicht in self.all, bleibt auch ohne Solakon-Verbindung bedienbar
-        self.ess = EssSettings(self, new_service, POWERTRACKER)
+        self.ess = EssSettings(self, new_service)
         for s in self.all + [self.ess.s]:
             if s is not self.meter:
                 s.register()
@@ -482,8 +485,7 @@ class Solakon(object):
             log.info("Netzzaehler Solakon (Modbus) abgemeldet")
 
     def set_gridmeter(self, v):
-        if v not in (METER_SOLAKON, METER_EXTERN) and not (v == METER_POWERTRACKER
-                                                          and POWERTRACKER):
+        if v not in (METER_SOLAKON, METER_VENUS):
             return False
         self.settings["gridmeter"] = v
         log.info("Netzzaehler-Quelle -> %d", v)
