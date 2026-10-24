@@ -38,7 +38,7 @@ class PowerTracker(object):
         for p, v in (("/Mgmt/ProcessName", __file__), ("/Mgmt/ProcessVersion", VERSION),
                      ("/Mgmt/Connection", "HTTP PowerTracker"), ("/DeviceInstance", 30),
                      ("/ProductId", 0xFFFF), ("/ProductName", "Solakon PowerTracker IR"),
-                     ("/CustomName", "Netz (PowerTracker)"), ("/FirmwareVersion", None),
+                     ("/CustomName", "Solakon PowerTracker (HTTP)"), ("/FirmwareVersion", None),
                      ("/Serial", None), ("/Connected", 0), ("/DeviceType", None),
                      ("/Role", "grid"), ("/NrOfPhases", 1), ("/Position", None)):
             s.add_path(p, v)

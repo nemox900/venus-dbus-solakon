@@ -232,7 +232,7 @@ class Solakon(object):
         self.ctl = Control(self.mb, self.settings, self.state, CONTROL_ENABLED)
 
         self.batt = new_service("com.victronenergy.battery.solakon", 512,
-                                "Solakon ONE Akku", "Solakon Akku")
+                                "Solakon ONE Akku", "Solakon Speicher")
         for p in ("/Soc", "/Soh", "/Dc/0/Voltage", "/Dc/0/Current", "/Dc/0/Power",
                   "/Dc/0/Temperature", "/Capacity", "/ConsumedAmphours", "/TimeToGo",
                   "/System/MinCellTemperature", "/System/MaxCellTemperature",
@@ -255,7 +255,7 @@ class Solakon(object):
         self.pv = {}
         for n in range(1, 5):
             s = new_service("com.victronenergy.solarcharger.solakon_pv%d" % n, 279 + n,
-                            "Solakon ONE MPPT %d" % n, "PV%d" % n)
+                            "Solakon ONE MPPT %d" % n, "Solakon MPPT %d" % n)
             for p in ("/Pv/V", "/Pv/I", "/Yield/Power", "/Dc/0/Voltage", "/Dc/0/Current",
                       "/State", "/Yield/User", "/Yield/System",
                       "/History/Overall/MaxPvVoltage", "/History/Overall/DaysAvailable"):
@@ -270,7 +270,8 @@ class Solakon(object):
             self.pv[n] = s
 
         m = self.multi = new_service("com.victronenergy.multi.solakon", 276,
-                                     "Solakon ONE Hybrid", "Solakon ONE", MULTI_RS_PRODUCT_ID)
+                                     "Solakon ONE Hybrid", "Solakon Wechselrichter",
+                                     MULTI_RS_PRODUCT_ID)
         m.add_path("/N2kSystemInstance", 0)
         m.add_path("/Devices/0/Gateway", "solakon")
         m.add_path("/Devices/0/Nad", 1)
@@ -335,10 +336,11 @@ class Solakon(object):
         m.add_path("/Solakon/ControlError", None)
 
         self.temp = {}
-        for key, inst, name in (("wr", 24, "Solakon Wechselrichter"),
-                                ("gehaeuse", 25, "Solakon Gehäuse")):
+        for key, inst, name, custom in (
+                ("wr", 24, "Solakon Wechselrichter", "Solakon Temp. Wechselrichter"),
+                ("gehaeuse", 25, "Solakon Gehäuse", "Solakon Temp. Gehäuse")):
             s = new_service("com.victronenergy.temperature.solakon_" + key, inst,
-                            name, name)
+                            name, custom)
             s.add_path("/Temperature", None)
             s.add_path("/TemperatureType", 2)   # generisch
             s.add_path("/Status", None)
@@ -350,13 +352,15 @@ class Solakon(object):
         # /Settings/Solakon/GridMeter gewaehlt ist (Venus nimmt sonst den Netzzaehler
         # mit der kleinsten Instanz, die Wahl waere Zufall).
         m = self.meter = new_service("com.victronenergy.grid.solakon_meter", 31,
-                                     "Solakon ONE Netzz\u00e4hler", "Netz (Solakon)")
+                                     "Solakon ONE Netzz\u00e4hler",
+                                     "Solakon Netzz\u00e4hler (Modbus)")
         for p, v in (("/Role", "grid"), ("/NrOfPhases", 1), ("/DeviceType", None),
                      ("/Position", None)):
             m.add_path(p, v)
         for p in ("/Ac/Power", "/Ac/L1/Power", "/Ac/Energy/Forward", "/Ac/Energy/Reverse"):
             m.add_path(p, None)
 
+        self.acsystem_named = False
         self.all = [self.batt, self.multi] + list(self.pv.values()) + list(self.temp.values()) \
             + [self.meter]
         # Einstell-Geraet: nicht in self.all, bleibt auch ohne Solakon-Verbindung bedienbar
@@ -445,6 +449,21 @@ class Solakon(object):
         self.settings["acinlimit"] = v
         log.info("AC-Eingangsgrenze -> %.1f A", v)
         return True
+
+    def name_acsystem(self):
+        """dbus-acsystem nennt das AC-System "AC system (0)". Einmalig einen
+        sprechenden Namen setzen, aber nur solange niemand selbst einen vergeben hat."""
+        if self.acsystem_named:
+            return
+        try:
+            o = self.sysbus.get_object("com.victronenergy.settings",
+                                       "/Settings/AcSystem/0/CustomName")
+            if str(o.GetValue(dbus_interface="com.victronenergy.BusItem")) == "":
+                o.SetValue("Solakon AC-System", dbus_interface="com.victronenergy.BusItem")
+                log.info("AC-System benannt: Solakon AC-System")
+            self.acsystem_named = True
+        except dbus.exceptions.DBusException:
+            pass        # dbus-acsystem hat die Einstellung noch nicht angelegt
 
     def sync_meter(self):
         """Solakon-Netzzaehler je nach Auswahl in Venus an- oder abmelden."""
@@ -549,6 +568,7 @@ class Solakon(object):
         try:
             self.reg.poll(self.mb)
             self.sync_meter()
+            self.name_acsystem()
             self.publish()
             self.state.save()
         except Exception:
