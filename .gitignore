@@ -1,0 +1,8 @@
+# Laufzeitdateien auf dem GX-Geraet
+config.ini
+config.ini.*
+state.json
+__pycache__/
+supervise/
+# gebaute Pakete (tools/make-release.sh)
+dist/

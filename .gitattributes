@@ -1,0 +1,4 @@
+# nicht ins Release-Archiv
+.gitignore export-ignore
+.gitattributes export-ignore
+tools export-ignore
