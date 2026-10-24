@@ -38,6 +38,10 @@ b = dbus.SystemBus()
 paths = [p for p in b.get_object("com.victronenergy.settings", "/Settings/Solakon")
          .GetValue(dbus_interface="com.victronenergy.BusItem").keys()]
 full = ["/Settings/Solakon/" + p for p in paths]
+# Instanzen und eigene Namen der Geraete (/Settings/Devices/solakon_*)
+devs = b.get_object("com.victronenergy.settings", "/Settings/Devices").GetValue(
+    dbus_interface="com.victronenergy.BusItem")
+full += ["/Settings/Devices/" + p for p in devs.keys() if p.startswith("solakon_")]
 if full:
     b.get_object("com.victronenergy.settings", "/").RemoveSettings(
         dbus.Array(full, signature="s"), dbus_interface="com.victronenergy.Settings")

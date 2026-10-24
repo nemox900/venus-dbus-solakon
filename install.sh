@@ -7,6 +7,8 @@
 # Hauszaehler) eingerichtet werden soll. Ohne Terminal (z. B. tools/deploy.sh)
 # wird nicht gefragt; dann gelten die Umgebungsvariablen, sonst bleibt config.ini:
 #   SOLAKON_HOST=<ip>   POWERTRACKER_HOST=<ip>   POWERTRACKER_HOST=nein
+# Voraussetzung ist Venus OS ab MIN_VERSION (getestet). FORCE=1 uebergeht die Pruefung
+# der Version und die Warnung vor einem vorhandenen Victron-Wechselrichter.
 #
 # Laeuft aus dem entpackten Paket (z. B. /tmp/dbus-solakon) oder direkt aus
 # /data/dbus-solakon. Ziel ist immer /data/dbus-solakon (uebersteht Firmware-Updates).
@@ -14,6 +16,7 @@
 # Mehrfaches Ausfuehren ist unschaedlich.
 set -e
 BASE=/data/dbus-solakon
+MIN_VERSION=3.85
 SRC=$(dirname "$(readlink -f "$0")")
 
 say() { echo "[solakon] $*"; }
@@ -25,7 +28,32 @@ fail() { echo "[solakon] FEHLER: $*" >&2; exit 1; }
 [ -d /opt/victronenergy/dbus-systemcalc-py/ext/velib_python ] || fail "velib_python nicht gefunden"
 [ -d /opt/victronenergy/dbus-acsystem ] || fail "dbus-acsystem fehlt (Venus OS 3.x mit Multi-RS-Unterstuetzung noetig)"
 python3 -c "import pymodbus.client.sync" 2>/dev/null || fail "pymodbus 2.x fehlt"
-say "Venus OS $(cat /opt/victronenergy/version 2>/dev/null | head -n 1)"
+ver=$(head -n 1 /opt/victronenergy/version 2>/dev/null)
+say "Venus OS $ver"
+# Das Menue "Solakon ESS" braucht die Schalter-/Zahlenfelder der neuen Oberflaeche,
+# die Freigabe von Dynamic ESS das dbus-acsystem der neuen Versionen.
+if ! echo "$ver" | awk -v min="$MIN_VERSION" '{
+		v = $0; sub(/^v/, "", v); split(v, a, /[.~-]/); split(min, b, ".")
+		exit !(a[1] > b[1] || (a[1] == b[1] && a[2] + 0 >= b[2] + 0)) }'; then
+	[ "${FORCE:-0}" = 1 ] || fail "Venus OS $ver ist zu alt, noetig ist v$MIN_VERSION oder neuer (bitte Venus aktualisieren; FORCE=1 uebergeht das)"
+	say "WARNUNG: Venus OS $ver aelter als v$MIN_VERSION, mit FORCE=1 trotzdem installiert"
+fi
+
+# --- Vorhandener Victron-Wechselrichter mit eigener Regelung? ---
+# Ein VE.Bus-Multi oder Multi RS haette ein eigenes ESS; zwei Regler am selben
+# Netzzaehler arbeiten gegeneinander.
+fremd=$(dbus -y 2>/dev/null | grep -E '^com\.victronenergy\.(vebus|multi|acsystem)\.' | grep -v solakon || true)
+if [ -n "$fremd" ]; then
+	say "WARNUNG: Victron-Wechselrichter gefunden: $(echo $fremd)"
+	say "Er hat eine eigene Regelung (ESS). Der Solakon-Mod ist fuer Anlagen ohne Victron-Wechselrichter gedacht."
+	if [ -t 0 ]; then
+		printf '[solakon] Trotzdem installieren? [j/N]: '
+		read -r a
+		case "$a" in [jJyY]*) ;; *) fail "abgebrochen" ;; esac
+	elif [ "${FORCE:-0}" != 1 ]; then
+		fail "abgebrochen (FORCE=1 installiert trotzdem)"
+	fi
+fi
 
 # --- Dateien kopieren (nur wenn aus einem anderen Ordner gestartet) ---
 if [ "$SRC" != "$BASE" ]; then

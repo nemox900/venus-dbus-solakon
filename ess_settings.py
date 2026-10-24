@@ -13,6 +13,8 @@ import logging
 import dbus
 from gi.repository import GLib
 
+from i18n import T
+
 log = logging.getLogger("dbus-solakon.settings")
 
 # /SwitchableOutput/x/Settings/Type (Venus OS 3.6x+)
@@ -22,15 +24,10 @@ STATUS_OFF, STATUS_ON = 0x00, 0x09
 MODULE_CONNECTED = 0x100
 SETTINGS = "com.victronenergy.settings"
 EPS_VALUES = [0, 2, 3]      # 46613: aus, EPS, USV (1 ist im Protokoll nicht belegt)
-EPS_LABELS = ["Aus", "EPS (bei Netzausfall)", "USV (unterbrechungsfrei)"]
 MODE_VALUES = [3, 1, 2, 4]  # Venus /Mode: Ein, nur Ladegeraet, nur Wechselrichter, Aus
-MODE_LABELS = ["Ein: Venus regelt", "Nur laden", "Nur abgeben", "Aus: App regelt"]
 # /Settings/Solakon/GridMeter: 0 Solakon-Zaehler, 2 Netzzaehler von Venus OS
 # (PowerTracker, Victron-Zaehler, Shelly ...; welcher, regelt Venus ueber die Rolle)
 METER_VALUES = [0, 2]
-METER_LABELS = ["Solakon (Modbus)", "Venus OS"]
-ESS_LABELS = ["Optimiert + BatteryLife", "Optimiert", "Akku voll halten",
-              "Extern (App, Zeitplan)"]       # Venus /Settings/Ess/Mode 0..3
 
 
 def unlimited(maxval):
@@ -57,65 +54,78 @@ class EssSettings(object):
         self.drv = drv
         cg = "/Settings/CGwacs/"
         de = "/Settings/DynamicEss/"
+        eps_labels = [T("Aus", "Off"), T("EPS (bei Netzausfall)", "EPS (on grid failure)"),
+                      T("USV (unterbrechungsfrei)", "UPS (uninterrupted)")]
+        mode_labels = [T("Ein: Venus regelt", "On: Venus controls"),
+                       T("Nur laden", "Charge only"), T("Nur abgeben", "Discharge only"),
+                       T("Aus: App regelt", "Off: app controls")]
+        meter_labels = ["Solakon (Modbus)", "Venus OS"]
+        ess_labels = [T("Optimiert + BatteryLife", "Optimized + BatteryLife"),
+                      T("Optimiert", "Optimized"),
+                      T("Akku voll halten", "Keep batteries charged"),
+                      T("Extern (App, Zeitplan)", "External (app, schedule)")]  # 0..3
         # (Kanal, Name, Typ, Quelle, Einheit bzw. Auswahltexte, Nachkommastellen, min, max,
         #  Schritt, Umrechnung)
         # Die Oberflaeche sortiert nach dem Namen und zeigt nur ~30 Zeichen: Oberbegriff
         # vorne (Betrieb, Einspeisung, Max. Leistung, Netzladen, Notstrom, SoC, VRM-DESS,
-        # WR-Abgabe), Erklaerungen in README.md. "Limit (800=aus)": Hoechstwert = kein Limit.
+        # WR-Abgabe; englisch Control, EPS, Feed-in, Grid charge, Inverter, Peak shaving, SoC,
+        # VRM DESS, Inverter), Erklaerungen in README.md. "Limit (800=aus)": Hoechstwert =
+        # kein Limit.
         # Quelle: ("venus", Pfad) | ("solakon", Schluessel) | ("reg", Adresse) |
         #         ("mode",) | ("essmode",) | ("meter",) | ("eps",)
         self.outputs = [
-            ("01_betrieb", "Betrieb: An / Aus", TYPE_DROPDOWN, ("mode",),
-             MODE_LABELS, 0, 0, len(MODE_VALUES) - 1, 1, None),
-            ("02_essmodus", "Betrieb: ESS-Modus", TYPE_DROPDOWN, ("essmode",),
-             ESS_LABELS, 0, 0, len(ESS_LABELS) - 1, 1, None),
-            ("02b_netzzaehler", "Betrieb: Netzz\u00e4hler", TYPE_DROPDOWN, ("meter",),
-             METER_LABELS, 0, 0, len(METER_LABELS) - 1, 1, None),
-            ("03_netz_sollwert", "Betrieb: Netz-Sollwert", TYPE_NUMERIC,
+            ("01_betrieb", T("Betrieb: An / Aus", "Control: On / Off"), TYPE_DROPDOWN, ("mode",),
+             mode_labels, 0, 0, len(MODE_VALUES) - 1, 1, None),
+            ("02_essmodus", T("Betrieb: ESS-Modus", "Control: ESS mode"), TYPE_DROPDOWN, ("essmode",),
+             ess_labels, 0, 0, len(ess_labels) - 1, 1, None),
+            ("02b_netzzaehler", T("Betrieb: Netzz\u00e4hler", "Control: grid meter"), TYPE_DROPDOWN, ("meter",),
+             meter_labels, 0, 0, len(meter_labels) - 1, 1, None),
+            ("03_netz_sollwert", T("Betrieb: Netz-Sollwert", "Control: grid setpoint"), TYPE_NUMERIC,
              ("venus", cg + "AcPowerSetPoint"), "W", 0, -800, 1200, 10, None),
-            ("04_einspeisung_aus", "Einspeisung: verhindern", TYPE_TOGGLE,
+            ("04_einspeisung_aus", T("Einspeisung: verhindern", "Feed-in: prevent"), TYPE_TOGGLE,
              ("venus", cg + "PreventFeedback"), None, 0, 0, 1, 1, None),
-            ("05_max_einspeisung", "Einspeisung: Limit (800=aus)", TYPE_NUMERIC,
+            ("05_max_einspeisung", T("Einspeisung: Limit (800=aus)", "Feed-in: limit (800=off)"), TYPE_NUMERIC,
              ("venus", cg + "MaxFeedInPower"), "W", 0, 0, 800, 10, unlimited(800)),
-            ("06_pv_ueberschuss", "Einspeisung: PV-\u00dcberschuss", TYPE_TOGGLE,
+            ("06_pv_ueberschuss", T("Einspeisung: PV-\u00dcberschuss", "Feed-in: PV excess"), TYPE_TOGGLE,
              ("venus", cg + "OvervoltageFeedIn"), None, 0, 0, 1, 1, None),
-            ("07_max_laden", "Netzladen: Limit (1200=aus)", TYPE_NUMERIC,
+            ("07_max_laden", T("Netzladen: Limit (1200=aus)", "Grid charge: limit (1200=off)"), TYPE_NUMERIC,
              ("venus", cg + "MaxChargePower"), "W", 0, 0, 1200, 10, unlimited(1200)),
-            ("08_ladeleistung", "Netzladen: Akku voll halten", TYPE_NUMERIC,
+            ("08_ladeleistung", T("Netzladen: Akku voll halten", "Grid charge: keep charged"), TYPE_NUMERIC,
              ("solakon", "chargepower"), "W", 0, 0, 1200, 50, None),
-            ("09_reserve_laden", "Netzladen: unter Reserve", TYPE_NUMERIC,
+            ("09_reserve_laden", T("Netzladen: unter Reserve", "Grid charge: below reserve"), TYPE_NUMERIC,
              ("solakon", "reservechargepower"), "W", 0, 0, 1200, 50, None),
-            ("10_eps", "Notstrom-Ausgang", TYPE_DROPDOWN, ("eps",),
-             EPS_LABELS, 0, 0, len(EPS_VALUES) - 1, 1, None),
+            ("10_eps", T("Notstrom-Ausgang", "EPS output"), TYPE_DROPDOWN, ("eps",),
+             eps_labels, 0, 0, len(EPS_VALUES) - 1, 1, None),
             # Peak Shaving (Victron: "Netzbezug begrenzen"). Die Einspeisegrenze
             # AcExportLimit steht nicht im Menue, "Einspeisung: Limit" deckt das ab;
             # der Regler beachtet sie trotzdem, falls sie gesetzt ist.
-            ("11_peak_bezug", "Max. Leistung: Netzbezug", TYPE_NUMERIC,
+            ("11_peak_bezug", T("Max. Leistung: Netzbezug", "Peak shaving: grid import"), TYPE_NUMERIC,
              ("venus", cg + "AcInputLimit"), "W", 0, 0, 14490, 230, amps_as_watts()),
-            ("13_peak_immer", "Max. Leistung: bis Akkuschutz", TYPE_TOGGLE,
+            ("13_peak_immer", T("Max. Leistung: bis Akkuschutz", "Peak shaving: to min SoC"), TYPE_TOGGLE,
              ("venus", cg + "AlwaysPeakShave"), None, 0, 0, 1, 1, None),
-            ("14_max_soc", "SoC: max. (Ladeende)", TYPE_NUMERIC, ("reg", 46610),
+            ("14_max_soc", T("SoC: max. (Ladeende)", "SoC: max (charge end)"), TYPE_NUMERIC, ("reg", 46610),
              "%", 0, 10, 100, 1, None),
-            ("15_min_soc_phys", "SoC: min. (Akkuschutz)", TYPE_NUMERIC, ("reg", 46609),
+            ("15_min_soc_phys", T("SoC: min. (Akkuschutz)", "SoC: min (protection)"), TYPE_NUMERIC, ("reg", 46609),
              "%", 0, 10, 100, 1, None),
-            ("16_reserve", "SoC: Reserve (Netzbetrieb)", TYPE_NUMERIC, ("reg", 46611),
+            ("16_reserve", T("SoC: Reserve (Netzbetrieb)", "SoC: reserve (on grid)"), TYPE_NUMERIC, ("reg", 46611),
              "%", 0, 10, 100, 1, None),
             # Dynamic ESS: normalerweise von VRM gesetzt; -1 = nicht eingetragen
-            ("16b_dess_kapazitaet", "VRM-DESS: Akkukapazit\u00e4t", TYPE_NUMERIC,
+            ("16b_dess_kapazitaet", T("VRM-DESS: Akkukapazit\u00e4t", "VRM DESS: battery capacity"), TYPE_NUMERIC,
              ("venus", de + "BatteryCapacity"), "kWh", 1, 0, 50, 0.1, None),
-            ("17_dess_laden", "VRM-DESS: Akku laden max.", TYPE_NUMERIC,
+            ("17_dess_laden", T("VRM-DESS: Akku laden max.", "VRM DESS: charge max"), TYPE_NUMERIC,
              ("venus", de + "BatteryChargeLimit"), "kW", 1, -1, 1.2, 0.1, None),
-            ("18_dess_entladen", "VRM-DESS: Akku entladen max.", TYPE_NUMERIC,
+            ("18_dess_entladen", T("VRM-DESS: Akku entladen max.", "VRM DESS: discharge max"), TYPE_NUMERIC,
              ("venus", de + "BatteryDischargeLimit"), "kW", 1, -1, 0.8, 0.1, None),
-            ("19_dess_bezug", "VRM-DESS: Hausanschluss Bezug", TYPE_NUMERIC,
+            ("19_dess_bezug", T("VRM-DESS: Hausanschluss Bezug", "VRM DESS: house grid import"), TYPE_NUMERIC,
              ("venus", de + "GridImportLimit"), "kW", 1, -1, 50, 0.1, None),
-            ("20_dess_einspeisung", "VRM-DESS: Einspeisung max.", TYPE_NUMERIC,
+            ("20_dess_einspeisung", T("VRM-DESS: Einspeisung max.", "VRM DESS: feed-in max"), TYPE_NUMERIC,
              ("venus", de + "GridExportLimit"), "kW", 1, -1, 50, 0.1, None),
-            ("21_max_entladen", "WR-Abgabe: Limit (800=aus)", TYPE_NUMERIC,
+            ("21_max_entladen", T("WR-Abgabe: Limit (800=aus)", "Inverter: limit (800=off)"), TYPE_NUMERIC,
              ("venus", cg + "MaxDischargePower"), "W", 0, 0, 800, 10, unlimited(800)),
         ]
-        s = self.s = service_factory("com.victronenergy.switch.solakon_ess", 91,
-                                     "Solakon ESS-Einstellungen", "Solakon ESS")
+        s = self.s = service_factory("com.victronenergy.switch.solakon_ess", "ess",
+                                     T("Solakon ESS-Einstellungen", "Solakon ESS Settings"),
+                                     "Solakon ESS")
         s.add_path("/State", MODULE_CONNECTED)
         self.value_path = {}
         for ch, name, typ, src, unit, dec, lo, hi, step, conv in self.outputs:

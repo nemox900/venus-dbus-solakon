@@ -30,8 +30,10 @@ from pymodbus.client.sync import ModbusTcpClient
 from settingsdevice import SettingsDevice
 from vedbus import VeDbusService
 
+import i18n
 from control import Control
 from ess_settings import EssSettings
+from i18n import T
 
 VERSION = "0.7.0"
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -65,9 +67,18 @@ SERIAL_SUFFIX = {"battery": "-BAT", "solarcharger.solakon_pv1": "-PV1",
 # 2 = Venus OS nimmt einen eigenen Netzzaehler (PowerTracker, Victron-Zaehler, Shelly ...).
 # 1 war bis 24.10. "PowerTracker" und wird zu 2 (der PowerTracker ist jetzt ein normaler Zaehler).
 METER_SOLAKON, METER_VENUS = 0, 2
-# Venus nimmt von mehreren Netzzaehlern den mit der kleinsten Instanz; andere Zaehler
+# Geraete-Instanzen vergibt Venus (localsettings) ueber
+# /Settings/Devices/solakon_<schluessel>/ClassAndVrmInstance wie bei Victron-Treibern:
+# ist die gewuenschte Nummer belegt (z. B. 280 von einem SmartSolar, 24/25 von den
+# Temperatureingaengen eines Cerbo), gibt es die naechste freie. Aendern im Menue
+# "VRM-Geraeteinstanzen"; der Treiber startet dann neu.
+# Netzzaehler: Venus nimmt von mehreren den mit der kleinsten Instanz; andere Zaehler
 # haben ab 30 aufwaerts, damit hat der Solakon-Zaehler Vorrang, wenn er gewaehlt ist.
-METER_INSTANCE = 10
+DEVICES = {"battery": ("battery", 512), "multi": ("multi", 276),
+           "pv1": ("solarcharger", 280), "pv2": ("solarcharger", 281),
+           "pv3": ("solarcharger", 282), "pv4": ("solarcharger", 283),
+           "temp_wr": ("temperature", 24), "temp_gehaeuse": ("temperature", 25),
+           "meter": ("grid", 10), "ess": ("switch", 91)}
 
 log = logging.getLogger("dbus-solakon")
 
@@ -169,23 +180,6 @@ class Registers(object):
         return None if None in r else r
 
 
-def new_service(name, instance, product, custom, product_id=0xFFFF):
-    s = VeDbusService(name, bus=dbus.bus.BusConnection(dbus.bus.BusConnection.TYPE_SYSTEM),
-                      register=False)
-    s.add_path("/Mgmt/ProcessName", __file__)
-    s.add_path("/Mgmt/ProcessVersion", VERSION)
-    s.add_path("/Mgmt/Connection", "Modbus-TCP Solakon ONE")
-    s.add_path("/DeviceInstance", instance)
-    s.add_path("/ProductId", product_id)
-    s.add_path("/ProductName", product)
-    s.add_path("/CustomName", custom)
-    s.add_path("/FirmwareVersion", None)
-    s.add_path("/Solakon/FirmwareText", None)
-    s.add_path("/Serial", None)
-    s.add_path("/Connected", 0)
-    return s
-
-
 def reject(path, value):
     log.info("Phase 2: Schreibwunsch abgewiesen %s = %r", path, value)
     return False
@@ -235,9 +229,18 @@ class Solakon(object):
             "gridmeter": ["/Settings/Solakon/GridMeter", METER_SOLAKON, 0, 2],
         }, None)
         self.ctl = Control(self.mb, self.settings, self.state, CONTROL_ENABLED)
+        dev = {}
+        for key, (cls, inst) in DEVICES.items():
+            base = "/Settings/Devices/solakon_%s/" % key
+            dev["inst_" + key] = [base + "ClassAndVrmInstance", "%s:%d" % (cls, inst), 0, 0]
+            dev["name_" + key] = [base + "CustomName", "", 0, 0]
+        self.devset = SettingsDevice(self.sysbus, dev, self.device_setting_changed)
+        self.services = {}          # Schluessel -> Dienst
+        self.default_name = {}      # Schluessel -> Name, wenn keiner vergeben ist
 
-        self.batt = new_service("com.victronenergy.battery.solakon", 512,
-                                "Solakon ONE Akku", "Solakon Speicher")
+        self.batt = self.new_service("com.victronenergy.battery.solakon", "battery",
+                                     T("Solakon ONE Akku", "Solakon ONE Battery"),
+                                     T("Solakon Speicher", "Solakon Battery"))
         for p in ("/Soc", "/Soh", "/Dc/0/Voltage", "/Dc/0/Current", "/Dc/0/Power",
                   "/Dc/0/Temperature", "/Capacity", "/ConsumedAmphours", "/TimeToGo",
                   "/System/MinCellTemperature", "/System/MaxCellTemperature",
@@ -259,8 +262,8 @@ class Solakon(object):
 
         self.pv = {}
         for n in range(1, 5):
-            s = new_service("com.victronenergy.solarcharger.solakon_pv%d" % n, 279 + n,
-                            "Solakon ONE MPPT %d" % n, "Solakon MPPT %d" % n)
+            s = self.new_service("com.victronenergy.solarcharger.solakon_pv%d" % n, "pv%d" % n,
+                                 "Solakon ONE MPPT %d" % n, "Solakon MPPT %d" % n)
             for p in ("/Pv/V", "/Pv/I", "/Yield/Power", "/Dc/0/Voltage", "/Dc/0/Current",
                       "/State", "/Yield/User", "/Yield/System",
                       "/History/Overall/MaxPvVoltage", "/History/Overall/DaysAvailable"):
@@ -274,9 +277,10 @@ class Solakon(object):
                     s.add_path("/History/Daily/%d/%s" % (d, k), None)
             self.pv[n] = s
 
-        m = self.multi = new_service("com.victronenergy.multi.solakon", 276,
-                                     "Solakon ONE Hybrid", "Solakon Wechselrichter",
-                                     MULTI_RS_PRODUCT_ID)
+        m = self.multi = self.new_service("com.victronenergy.multi.solakon", "multi",
+                                          "Solakon ONE Hybrid",
+                                          T("Solakon Wechselrichter", "Solakon Inverter"),
+                                          MULTI_RS_PRODUCT_ID)
         m.add_path("/N2kSystemInstance", 0)
         m.add_path("/Devices/0/Gateway", "solakon")
         m.add_path("/Devices/0/Nad", 1)
@@ -341,11 +345,13 @@ class Solakon(object):
         m.add_path("/Solakon/ControlError", None)
 
         self.temp = {}
-        for key, inst, name, custom in (
-                ("wr", 24, "Solakon Wechselrichter", "Solakon Temp. Wechselrichter"),
-                ("gehaeuse", 25, "Solakon Gehäuse", "Solakon Temp. Gehäuse")):
-            s = new_service("com.victronenergy.temperature.solakon_" + key, inst,
-                            name, custom)
+        for key, name, custom in (
+                ("wr", T("Solakon Wechselrichter", "Solakon Inverter"),
+                 T("Solakon Temp. Wechselrichter", "Solakon Temp. Inverter")),
+                ("gehaeuse", T("Solakon Gehäuse", "Solakon Enclosure"),
+                 T("Solakon Temp. Gehäuse", "Solakon Temp. Enclosure"))):
+            s = self.new_service("com.victronenergy.temperature.solakon_" + key,
+                                 "temp_" + key, name, custom)
             s.add_path("/Temperature", None)
             s.add_path("/TemperatureType", 2)   # generisch
             s.add_path("/Status", None)
@@ -356,9 +362,11 @@ class Solakon(object):
         # darum eine virtuelle Phase wie beim PowerTracker. Angemeldet nur, wenn er in
         # /Settings/Solakon/GridMeter gewaehlt ist (Venus nimmt sonst den Netzzaehler
         # mit der kleinsten Instanz, die Wahl waere Zufall).
-        m = self.meter = new_service("com.victronenergy.grid.solakon_meter", METER_INSTANCE,
-                                     "Solakon ONE Netzz\u00e4hler",
-                                     "Solakon Netzz\u00e4hler (Modbus)")
+        m = self.meter = self.new_service("com.victronenergy.grid.solakon_meter", "meter",
+                                          T("Solakon ONE Netzz\u00e4hler",
+                                            "Solakon ONE Grid Meter"),
+                                          T("Solakon Netzz\u00e4hler (Modbus)",
+                                            "Solakon Grid Meter (Modbus)"))
         for p, v in (("/Role", "grid"), ("/NrOfPhases", 1), ("/DeviceType", None),
                      ("/Position", None)):
             m.add_path(p, v)
@@ -371,17 +379,71 @@ class Solakon(object):
         self.all = [self.batt, self.multi] + list(self.pv.values()) + list(self.temp.values()) \
             + [self.meter]
         # Einstell-Geraet: nicht in self.all, bleibt auch ohne Solakon-Verbindung bedienbar
-        self.ess = EssSettings(self, new_service)
+        self.ess = EssSettings(self, self.new_service)
         for s in self.all + [self.ess.s]:
             if s is not self.meter:
                 s.register()
         self.sync_meter()
         GLib.timeout_add(2000, self.tick)
         GLib.timeout_add(10000, self.ess.refresh)
+        GLib.timeout_add(30000, self.check_language)
         self.ess.refresh()
         log.info("Treiber %s gestartet", VERSION)
 
     # ---------------------------------------------------------------
+    def new_service(self, name, key, product, custom, product_id=0xFFFF):
+        """Dienst anlegen; Instanz und eigener Name aus /Settings/Devices/solakon_<key>/."""
+        s = VeDbusService(name, bus=dbus.bus.BusConnection(dbus.bus.BusConnection.TYPE_SYSTEM),
+                          register=False)
+        s.add_path("/Mgmt/ProcessName", __file__)
+        s.add_path("/Mgmt/ProcessVersion", VERSION)
+        s.add_path("/Mgmt/Connection", "Modbus-TCP Solakon ONE")
+        s.add_path("/DeviceInstance", int(str(self.devset["inst_" + key]).split(":")[1]))
+        s.add_path("/ProductId", product_id)
+        s.add_path("/ProductName", product)
+        s.add_path("/CustomName", str(self.devset["name_" + key]) or custom, writeable=True,
+                   onchangecallback=lambda p, v, k=key: self.set_custom_name(k, v))
+        s.add_path("/FirmwareVersion", None)
+        s.add_path("/Solakon/FirmwareText", None)
+        s.add_path("/Serial", None)
+        s.add_path("/Connected", 0)
+        self.services[key] = s
+        self.default_name[key] = custom
+        return s
+
+    def set_custom_name(self, key, value):
+        """Name aus der Oberflaeche; leer oder Standardname = Standard (folgt der Sprache)."""
+        v = str(value).strip()
+        self.devset["name_" + key] = "" if v == self.default_name[key] else v
+        if not v:
+            # Anzeige auf den Standardnamen zuruecksetzen, nachdem der Schreibzugriff durch ist
+            GLib.idle_add(lambda: self.set_all(self.services[key], {
+                "/CustomName": self.default_name[key]}) and False)
+        return True
+
+    def device_setting_changed(self, setting, old, new):
+        if setting.startswith("inst_") and old != new:
+            # Neue Instanz (Menue "VRM-Geraeteinstanzen"): Dienste neu anlegen = Neustart
+            log.info("Instanz %s: %s -> %s, Neustart", setting[5:], old, new)
+            self.restart()
+        elif setting.startswith("name_"):
+            key = setting[5:]
+            if key in self.services:
+                self.set_all(self.services[key], {"/CustomName": str(new) or
+                                                  self.default_name[key]})
+
+    def restart(self):
+        """Sauber beenden (gibt die Fernsteuerung frei), daemontools startet neu."""
+        GLib.timeout_add(500, lambda: os.kill(os.getpid(), signal.SIGTERM) and False)
+
+    def check_language(self):
+        lang = i18n.read_language(self.sysbus)
+        if lang and lang != i18n.LANG:
+            log.info("Sprache %s -> %s, Neustart", i18n.LANG, lang)
+            self.restart()
+            return False
+        return True
+
     def guarded(self, fn):
         """Schreib-Callback fuer multi-Pfade. Wird ein Wert abgewiesen, meldet der
         Treiber den gueltigen Wert neu, damit dbus-acsystem (das den Wert schon
@@ -465,9 +527,12 @@ class Solakon(object):
         try:
             o = self.sysbus.get_object("com.victronenergy.settings",
                                        "/Settings/AcSystem/0/CustomName")
-            if str(o.GetValue(dbus_interface="com.victronenergy.BusItem")) == "":
-                o.SetValue("Solakon AC-System", dbus_interface="com.victronenergy.BusItem")
-                log.info("AC-System benannt: Solakon AC-System")
+            want = T("Solakon AC-System", "Solakon AC system")
+            cur = str(o.GetValue(dbus_interface="com.victronenergy.BusItem"))
+            # nur leer oder unser Standardname (andere Sprache); eigener Name bleibt
+            if cur in ("", "Solakon AC-System", "Solakon AC system") and cur != want:
+                o.SetValue(want, dbus_interface="com.victronenergy.BusItem")
+                log.info("AC-System benannt: %s", want)
             self.acsystem_named = True
         except dbus.exceptions.DBusException:
             pass        # dbus-acsystem hat die Einstellung noch nicht angelegt
@@ -829,6 +894,7 @@ class Solakon(object):
 def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    i18n.set_language(i18n.read_language(dbus.SystemBus()) or "de")
     drv = Solakon()
     loop = GLib.MainLoop()
 

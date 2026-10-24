@@ -6,15 +6,19 @@ Kurz: Gerätemodus im Menü **Solakon ESS → „Betrieb: An / Aus“**. *Ein* =
 
 ## Geräte
 
-| D-Bus-Dienst | Instanz | Inhalt |
+| D-Bus-Dienst | Instanz (Wunsch) | Inhalt |
 |---|---|---|
 | `com.victronenergy.battery.solakon` | 512 | Akku/BMS: SoC, SoH, Spannung, Strom, Leistung, Zelltemperatur und Zellspannung min/max, Module, Fehler |
 | `com.victronenergy.solarcharger.solakon_pv1` … `pv4` | 280–283 | je MPPT-Tracker ein Gerät: Spannung, Strom, Leistung, Tageserträge (30 Tage) |
 | `com.victronenergy.multi.solakon` | 276 | Hybrid-Wechselrichter mit Multi-RS-Schnittstelle; AC-Ausgang = Notstrom-Ausgang (EPS, 39201 ff., nur wenn eingeschaltet). Venus' `dbus-acsystem` macht daraus das AC-System (ESS, Zeitpläne, DVCC, Dynamic ESS) |
 | `com.victronenergy.temperature.solakon_wr` / `_gehaeuse` | 24 / 25 | Wechselrichter- und Gehäusetemperatur |
 | `com.victronenergy.grid.solakon_meter` | 10 | Netzzähler aus dem Solakon (Modbus 38814, Summenleistung, eine virtuelle Phase). Nur angemeldet, wenn im Menü „Solakon (Modbus)“ gewählt ist. Instanz 10, damit Venus ihn dann vor allen anderen Netzzählern nimmt |
-| `com.victronenergy.<rolle>.solakon_powertracker` | 30 | optional (Frage bei der Installation): PowerTracker IR als normaler Venus-Zähler (HTTP, Summenleistung + Zählerstände, eine virtuelle Phase). Immer angemeldet, Rolle in seinen Geräte-Einstellungen: Netz (Standard), PV-Wechselrichter, Generator, Verbraucher |
+| `com.victronenergy.<rolle>.solakon_powertracker` | 30 | optional (Frage bei der Installation): PowerTracker IR als normaler Venus-Zähler (HTTP, Summenleistung + Zählerstände, eine virtuelle Phase). Immer angemeldet, Rolle in seinen Geräte-Einstellungen: Netz (Standard), PV-Wechselrichter, Generator, Verbraucher. Rolle und Instanz stehen wie bei Shelly-Zählern zusammen in `ClassAndVrmInstance` (z. B. `grid:30`) |
 | `com.victronenergy.switch.solakon_ess` | 91 | **Solakon ESS-Einstellungen**: Zahlenfelder, Auswahllisten und Schalter (siehe unten) |
+
+Instanzen und Namen: Wie bei Victron-Treibern vergibt Venus die Geräteinstanz über `/Settings/Devices/solakon_<gerät>/ClassAndVrmInstance`. Ist die Wunschnummer schon belegt (z. B. 280 durch einen SmartSolar oder 24/25 durch die Temperatureingänge eines Cerbo GX), bekommt das Gerät die nächste freie. Ändern lässt sie sich im Venus-Menü „VRM-Geräteinstanzen“, der Treiber startet dann neu. Jedes Gerät lässt sich in der Oberfläche umbenennen (`.../CustomName`; leer = Standardname).
+
+Sprache: Geräte- und Menünamen folgen der Sprache der Venus-Oberfläche (Deutsch, sonst Englisch). Bei einem Wechsel starten die Treiber nach spätestens 30 s neu.
 
 Seriennummern: Jedes Gerät hat eine eigene, aus der Solakon-Seriennummer abgeleitete Nummer (`<SN>` am Wechselrichter, `<SN>-BAT`, `-PV1` … `-PV4`, `-TWR`, `-TGH`, `-ESS`, `-NZ`). Sie sind stabil über Neuinstallationen und gehören zu keinem echten Victron-Gerät. Die BMS-Seriennummer steht in `/Solakon/BmsSerial`.
 
@@ -24,7 +28,7 @@ Kennung für Dynamic ESS: Venus gibt Dynamic ESS nur für einen Multi RS ab eine
 
 ## Installation
 
-Voraussetzung: Venus OS 3.x (getestet 3.85) mit Root-Zugang per SSH. Alles liegt unter `/data/dbus-solakon` (übersteht Firmware-Updates), `/data/rc.local` hängt die Dienste bei jedem Start wieder ein.
+Voraussetzung: **Venus OS ab v3.85** mit Root-Zugang per SSH. Ältere Versionen lehnt `install.sh` ab, weil das Menü „Solakon ESS“ die Schalter- und Zahlenfelder der neuen Oberfläche braucht (`FORCE=1` übergeht das). Gedacht ist der Mod für Anlagen **ohne** Victron-Wechselrichter: Findet `install.sh` einen VE.Bus-Multi oder Multi RS mit eigenem ESS, warnt es und fragt nach (ohne Terminal: Abbruch, außer mit `FORCE=1`). Alles liegt unter `/data/dbus-solakon` (übersteht Firmware-Updates), `/data/rc.local` hängt die Dienste bei jedem Start wieder ein.
 
 **Vom PC aus** (Git-Stand, baut das Archiv und installiert per SSH):
 
@@ -51,7 +55,7 @@ svc -t /service/dbus-solakon
 | Befehl | Wirkung |
 |---|---|
 | `sh /data/dbus-solakon/uninstall.sh` | Dienste stoppen (der Treiber gibt die Fernsteuerung frei, die App steuert wieder) und aus dem Start austragen. Dateien und Einstellungen bleiben, `install.sh` aktiviert alles wieder |
-| `sh /data/dbus-solakon/uninstall.sh --alles` | zusätzlich `/data/dbus-solakon`, Logs und `/Settings/Solakon/*` löschen |
+| `sh /data/dbus-solakon/uninstall.sh --alles` | zusätzlich `/data/dbus-solakon`, Logs, `/Settings/Solakon/*` und `/Settings/Devices/solakon_*` (Instanzen, Namen) löschen |
 
 Die Einstellungen im Solakon selbst (Ladegrenzen, EPS) bleiben so, wie sie zuletzt gesetzt waren.
 
@@ -66,6 +70,7 @@ Die Einstellungen im Solakon selbst (Ladegrenzen, EPS) bleiben so, wie sie zulet
 | `dbus-solakon.py` | Treiber: Modbus lesen, alle Geräte außer Netzzähler, Schreibbefehle |
 | `control.py` | Regler (Rolle der Multi-RS-Firmware) |
 | `ess_settings.py` | Einstell-Gerät „Solakon ESS“ |
+| `i18n.py` | Deutsch/Englisch nach der Venus-Sprache |
 | `dbus-powertracker.py` | Netzzähler (HTTP) |
 | `tools/` | nur im Git: Release-Archiv bauen, per SSH verteilen |
 | `service-*/` | daemontools-Dienste; Logs unter `/var/log/dbus-solakon/current` und `/var/log/dbus-powertracker/current` |
