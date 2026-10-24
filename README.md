@@ -11,6 +11,11 @@ Bindet einen Solakon ONE (WF2000M) und den Solakon PowerTracker IR als native Ve
 | `com.victronenergy.multi.solakon` | 276 | Hybrid-Wechselrichter mit Multi-RS-Schnittstelle; AC-Ausgang = Notstrom-Ausgang (EPS, 39201 ff., nur wenn eingeschaltet). Venus' `dbus-acsystem` macht daraus das AC-System (ESS, Zeitpläne, DVCC, Dynamic ESS) |
 | `com.victronenergy.temperature.solakon_wr` / `_gehaeuse` | 24 / 25 | Wechselrichter- und Gehäusetemperatur |
 | `com.victronenergy.grid.solakon_powertracker` | 30 | Netzzähler (saldierte Summe, eine virtuelle Phase) |
+| `com.victronenergy.switch.solakon_ess` | 91 | **Solakon ESS-Einstellungen**: Zahlenfelder, Auswahllisten und Schalter (siehe unten) |
+
+Seriennummern: Jedes Gerät hat eine eigene, aus der Solakon-Seriennummer abgeleitete Nummer (`<SN>` am Wechselrichter, `<SN>-BAT`, `-PV1` … `-PV4`, `-TWR`, `-TGH`, `-ESS`). Sie sind stabil über Neuinstallationen und gehören zu keinem echten Victron-Gerät. Die BMS-Seriennummer steht in `/Solakon/BmsSerial`.
+
+Kennung für Dynamic ESS: Venus gibt Dynamic ESS nur für einen Multi RS ab einer bestimmten Firmware frei. Darum meldet `multi.solakon` die ProductId `0xA442` und die Firmware `0x11713`. Die echte Solakon-Firmware steht in `/Solakon/FirmwareText`. **In VRM kein Firmware-Update für dieses Gerät auslösen**, es kann nicht ankommen.
 
 `dbus-solakon.py` ist der einzige Modbus-Master. Das Solakon verträgt keine parallelen Zugriffe; deshalb darf kein anderes Programm gleichzeitig per Modbus lesen. `dbus-powertracker.py` ist ein eigener Prozess (HTTP).
 
@@ -56,6 +61,23 @@ Die Einstellungen im Solakon selbst (Ladegrenzen, EPS) bleiben so, wie sie zulet
 | `tools/` | nur im Git: Release-Archiv bauen, per SSH verteilen |
 | `service-*/` | daemontools-Dienste; Logs unter `/var/log/dbus-solakon/current` und `/var/log/dbus-powertracker/current` |
 
+## ESS-Einstellungen
+
+Bei einem Multi RS blendet Venus das ESS-Menü aus (*Einstellungen → ESS* zeigt nur einen Hinweis), weil diese Werte beim echten Gerät mit VictronConnect gesetzt werden. Unter *Geräteliste → AC-System → ESS* gibt es nur Modus, Min-SoC und Dynamic ESS. Alles Weitere stellt das Gerät **Solakon ESS-Einstellungen** bereit (Geräteliste und Schalter-Bereich, auch über VRM):
+
+| Eintrag | schreibt |
+|---|---|
+| Netz-Sollwert (W) | `/Settings/CGwacs/AcPowerSetPoint` |
+| Einspeisung verhindern | `PreventFeedback` |
+| Max. Einspeisung, max. Abgabe WR (800 = unbegrenzt), max. Netzladen (1200 = unbegrenzt) | `MaxFeedInPower`, `MaxDischargePower`, `MaxChargePower` (unbegrenzt = -1) |
+| Peak Shaving Netzbezug / Einspeisung (A, 0 = aus), „auch unter der Reserve“ | `AcInputLimit`, `AcExportLimit`, `AlwaysPeakShave` |
+| Ladeleistung „Geladen halten“, Nachladeleistung unter der Reserve | `/Settings/Solakon/ChargePower`, `ReserveChargePower` |
+| Max. SoC, Min. SoC (Akkuschutz) | Register 46610, 46609 (mit Rücklesen) |
+| Notstrom-Ausgang (Aus / EPS / USV) | Register 46613 |
+| Dynamic ESS: max. Laden/Entladen/Netzbezug/Einspeisung (kW) | `/Settings/DynamicEss/*Limit` |
+
+Die Dynamic-ESS-Grenzen setzt normalerweise VRM. Stehen sie bei aktivem Dynamic ESS auf -1, bricht Venus' Berechnung ab; der Treiber meldet das in `/Solakon/ControlText`. Passend für das Solakon: Laden 1,2 kW, Entladen 0,8 kW.
+
 ## Steuerung
 
 Eingeschaltet mit `[control] enabled = 1` in `config.ini` (Standard 0 = nur lesen, Hersteller-App steuert). Danach den Dienst neu starten (`svc -t /service/dbus-solakon`).
@@ -80,6 +102,8 @@ Der Treiber übernimmt die Rolle der Multi-RS-Firmware. Venus gibt über das AC-
 | Max. Ladeleistung (`MaxChargePower`) | begrenzt das Netzladen zusätzlich |
 
 Zusätzliche Pfade am `multi.solakon`: `/Solakon/SetEpsOutput` (46613: 0 aus, 2 EPS, 3 USV; `/Solakon/EpsOutputChanged` = 1, wenn die Einstellung von außen geändert wurde), `/Solakon/SetMaxSoc` (46610), `/Solakon/SetMinSocPhysical` (46609), `/Solakon/ChargePower`, `/Solakon/ReserveChargePower` (0–1200 W), Status in `/Solakon/ControlText` und `/Solakon/ControlError`.
+
+Zwischen Abgabe und Netzladen wird frühestens nach 30 s gewechselt (bis dahin 0 W im alten Modus), damit das Gerät bei einem Sollwert um 0 nicht ständig umschaltet.
 
 Grenzen: Abgabe max. 800 W, Netzladen max. 1200 W (Datenblatt). Befehle werden alle 30 s mit 90 s Timeout erneuert; endet der Treiber, gibt er die Fernsteuerung sofort ab, spätestens nach 90 s übernimmt das Gerät wieder selbst. Nie geschrieben werden: Work mode 49203, Ein/Aus 49077/49078, 45005/45007, Export Power Limit 46616, MPPT-Schalter 49210.
 

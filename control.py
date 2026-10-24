@@ -27,6 +27,7 @@ MAX_EXPORT_W = 800      # Datenblatt AC-Ausgang
 MAX_CHARGE_W = 1200     # Datenblatt AC-Eingang 1200 VA
 NOMINAL_AC_V = 230      # Umrechnung A -> W fuer Strombegrenzungen
 SETPOINT_HOLD_S = 60    # so lange gilt ein von Venus (DESS/extern) gesetzter Netz-Sollwert
+MODE_HOLD_S = 30        # Mindestzeit zwischen Wechseln Abgabe <-> Netzladen (46001 1 <-> 7)
 
 # Venus /Settings/Ess/Mode
 ESS_BATTERYLIFE, ESS_OPTIMIZED, ESS_KEEP_CHARGED, ESS_EXTERNAL = 0, 1, 2, 3
@@ -51,6 +52,8 @@ class Control(object):
         self.req_t = {}
         self.last = None          # (art, w) zuletzt bestaetigt
         self.last_t = 0.0
+        self.art_t = 0.0          # letzter Wechsel Abgabe <-> Netzladen
+        self.dess_warned = False
         self.reserve_active = False
         self.keep_active = False
         self.error = None
@@ -311,8 +314,23 @@ class Control(object):
             self.text = "Steuerung aus (config.ini), Geraet im App-Betrieb"
             return
         art, w, text = self.decide(m)
-        self.text = text
         now = time.monotonic()
+        # Pendelt der Sollwert um 0, nicht staendig zwischen Abgabe und Netzladen
+        # umschalten: bis MODE_HOLD_S im alten Modus bleiben, mit 0 W
+        last_art = self.last[0] if self.last else None
+        if art in ("abgabe", "netz") and last_art in ("abgabe", "netz") and art != last_art:
+            wait = MODE_HOLD_S - (now - self.art_t)
+            if wait > 0:
+                art, w = last_art, 0
+                text += " (Wechsel in %d s)" % wait
+        if m.get("dess_missing"):
+            text += "; Dynamic ESS: Grenzen nicht eingetragen (%s)" % m["dess_missing"]
+            if not self.dess_warned:
+                log.warning("Dynamic ESS aktiv, aber Grenzen auf -1: %s", m["dess_missing"])
+                self.dess_warned = True
+        else:
+            self.dess_warned = False
+        self.text = text
         changed = (self.last is None or self.last[0] != art
                    or (w is not None and abs((self.last[1] or 0) - w) >= MIN_CHANGE_W))
         if art == "app":
@@ -327,6 +345,8 @@ class Control(object):
             if self.last is None or self.last[0] != art or \
                     abs((self.last[1] or 0) - (w or 0)) >= LOG_CHANGE_W:
                 log.info("OK: %s", text)
+            if art != last_art:
+                self.art_t = now
             self.last, self.last_t, self.error = (art, w), now, None
         else:
             self.error = "Schreiben fehlgeschlagen: %s" % text

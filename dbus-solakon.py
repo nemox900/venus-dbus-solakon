@@ -31,8 +31,9 @@ from settingsdevice import SettingsDevice
 from vedbus import VeDbusService
 
 from control import Control
+from ess_settings import EssSettings
 
-VERSION = "0.5.1"
+VERSION = "0.6.0"
 BASE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = configparser.ConfigParser()
 CONFIG.read([os.path.join(BASE, "config.default.ini"), os.path.join(BASE, "config.ini")])
@@ -46,6 +47,19 @@ CAPACITY_AH = 240.0     # Datenblatt: 4 x 2,11 kWh / 35,2 V
 NOMINAL_V = 35.2
 AC_IN_LIMIT_A = 5.4     # Datenblatt WF2000M: AC-Eingang max. 5,4 A
 INVERTER_W = 800
+# Venus (dbus-acsystem) gibt Dynamic ESS nur fuer Multi RS ab einer bestimmten
+# Firmware frei (ProductId 0xA440-0xA47F, Firmware >= 0x11713). Darum meldet das
+# multi-Geraet diese Kennung; die echte Solakon-Firmware steht in /Solakon/FirmwareText.
+# Achtung: in VRM kein Firmware-Update fuer dieses Geraet ausloesen (kommt nie an,
+# das Solakon haengt nicht am Victron-Bus).
+MULTI_RS_PRODUCT_ID = 0xA442
+MULTI_RS_FIRMWARE = 0x11713
+# Seriennummern: je Geraet eindeutig und stabil, aus der Solakon-Seriennummer
+# abgeleitet (keine erfundenen Victron-Nummern, die einem echten Geraet gehoeren koennten)
+SERIAL_SUFFIX = {"battery": "-BAT", "solarcharger.solakon_pv1": "-PV1",
+                 "solarcharger.solakon_pv2": "-PV2", "solarcharger.solakon_pv3": "-PV3",
+                 "solarcharger.solakon_pv4": "-PV4", "temperature.solakon_wr": "-TWR",
+                 "temperature.solakon_gehaeuse": "-TGH", "switch.solakon_ess": "-ESS"}
 
 log = logging.getLogger("dbus-solakon")
 
@@ -147,14 +161,14 @@ class Registers(object):
         return None if None in r else r
 
 
-def new_service(name, instance, product, custom):
+def new_service(name, instance, product, custom, product_id=0xFFFF):
     s = VeDbusService(name, bus=dbus.bus.BusConnection(dbus.bus.BusConnection.TYPE_SYSTEM),
                       register=False)
     s.add_path("/Mgmt/ProcessName", __file__)
     s.add_path("/Mgmt/ProcessVersion", VERSION)
     s.add_path("/Mgmt/Connection", "Modbus-TCP Solakon ONE")
     s.add_path("/DeviceInstance", instance)
-    s.add_path("/ProductId", 0xFFFF)
+    s.add_path("/ProductId", product_id)
     s.add_path("/ProductName", product)
     s.add_path("/CustomName", custom)
     s.add_path("/FirmwareVersion", None)
@@ -228,7 +242,8 @@ class Solakon(object):
                   "/Solakon/BmsFault4", "/Solakon/BmsFault5", "/Solakon/BmsFault6",
                   "/Solakon/ForceChargeFlag", "/Solakon/RemainEnergyRaw",
                   "/Solakon/FccRaw", "/Solakon/DesignEnergyRaw",
-                  "/Solakon/MaxChargePower", "/Solakon/MaxDischargePower"):
+                  "/Solakon/MaxChargePower", "/Solakon/MaxDischargePower",
+                  "/Solakon/BmsSerial"):
             self.batt.add_path(p, None)
         self.batt.add_path("/InstalledCapacity", CAPACITY_AH)
 
@@ -250,7 +265,7 @@ class Solakon(object):
             self.pv[n] = s
 
         m = self.multi = new_service("com.victronenergy.multi.solakon", 276,
-                                     "Solakon ONE Hybrid", "Solakon ONE")
+                                     "Solakon ONE Hybrid", "Solakon ONE", MULTI_RS_PRODUCT_ID)
         m.add_path("/N2kSystemInstance", 0)
         m.add_path("/Devices/0/Gateway", "solakon")
         m.add_path("/Devices/0/Nad", 1)
@@ -325,9 +340,13 @@ class Solakon(object):
             self.temp[key] = s
 
         self.all = [self.batt, self.multi] + list(self.pv.values()) + list(self.temp.values())
-        for s in self.all:
+        # Einstell-Geraet: nicht in self.all, bleibt auch ohne Solakon-Verbindung bedienbar
+        self.ess = EssSettings(self, new_service)
+        for s in self.all + [self.ess.s]:
             s.register()
         GLib.timeout_add(2000, self.tick)
+        GLib.timeout_add(10000, self.ess.refresh)
+        self.ess.refresh()
         log.info("Treiber %s gestartet", VERSION)
 
     # ---------------------------------------------------------------
@@ -440,6 +459,18 @@ class Solakon(object):
             self.venus["peak_import_a"] = get(s, "/Settings/CGwacs/AcInputLimit")
             self.venus["peak_export_a"] = get(s, "/Settings/CGwacs/AcExportLimit")
             self.venus["always_peak"] = get(s, "/Settings/CGwacs/AlwaysPeakShave")
+            # Dynamic ESS rechnet mit diesen Grenzen; -1 (nicht eingetragen) laesst
+            # die Berechnung in Venus abbrechen
+            missing = []
+            if (get(s, "/Settings/DynamicEss/Mode") or 0) > 0:
+                for key, name in (("BatteryChargeLimit", "Laden"),
+                                  ("BatteryDischargeLimit", "Entladen"),
+                                  ("GridImportLimit", "Netzbezug"),
+                                  ("GridExportLimit", "Einspeisung")):
+                    v = get(s, "/Settings/DynamicEss/" + key)
+                    if v is None or v < 0:
+                        missing.append(name)
+            self.venus["dess_missing"] = ", ".join(missing) or None
             self.venus_t = time.monotonic()
 
     def control(self, soc, ac, pv):
@@ -684,10 +715,12 @@ class Solakon(object):
         fw = R.g(36001)
         fwtext = "%d/%d/%d" % (R.g(36001), R.g(36002), R.g(36003))
         modules = R.g(37032)
-        for s in self.all:
+        for s in self.all + [self.ess.s]:
+            short = s.name.split("com.victronenergy.", 1)[1]
+            suffix = SERIAL_SUFFIX.get(short.split(".")[0] if short.startswith("battery") else short, "")
             with s as w:
-                w["/Serial"] = bms_sn if s is self.batt else sn
-                w["/FirmwareVersion"] = fw
+                w["/Serial"] = sn + suffix
+                w["/FirmwareVersion"] = MULTI_RS_FIRMWARE if s is self.multi else fw
                 w["/Solakon/FirmwareText"] = fwtext
         with self.multi as w:
             w["/ProductName"] = "%s Hybrid" % model
@@ -695,6 +728,8 @@ class Solakon(object):
             # 37032: Anzahl Slave-Module laut BMS, Kopfmodul zaehlt zusaetzlich
             w["/System/NrOfModulesOnline"] = modules + 1 if modules is not None else None
             w["/System/NrOfBatteries"] = 1
+        with self.batt as w:
+            w["/Solakon/BmsSerial"] = bms_sn
         log.info("Geraet %s SN %s FW %s, BMS %s, Module %s", model, sn, fwtext, bms_sn,
                  modules)
         self.info_done = True
