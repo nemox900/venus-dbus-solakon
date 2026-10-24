@@ -310,7 +310,9 @@ class Control(object):
         # Verbrauch hinter dem Zaehler = Netz + Solakon-Abgabe; davon bleibt der Sollwert am Netz
         want = m["ac"] + m["grid"] - setpoint
         surplus = self.pv_surplus(m)
-        if surplus > want:
+        # nur ein echter Ueberschuss (Akku voll) hebt die Abgabe an; sonst wuerde ein
+        # Ladewunsch (want < 0, Sollwert ueber dem Verbrauch) auf 0 W gekappt
+        if surplus > 0 and surplus > want:
             want = surplus
             setpoint_text = "PV-Ueberschuss einspeisen"
         else:
@@ -323,7 +325,7 @@ class Control(object):
 
         if want < -GRID_CHARGE_START_W and grid_charge_ok and soc < m["maxsoc"]:
             w = int(min(-want, charge_w))
-            return "netz", w, "Ueberschuss laden %d W (Sollwert %d W)" % (w, setpoint)
+            return "netz", w, "Netzladen %d W (Sollwert %d W)" % (w, setpoint)
         if not feed_ok:
             return "abgabe", 0, "Nur Ladegeraet: keine Abgabe"
         if soc <= reserve and not self.req["/Ess/DisableCharge"]:
