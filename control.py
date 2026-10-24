@@ -227,6 +227,24 @@ class Control(object):
                 w, text = cap, text + ", Einspeisung begrenzt auf %d W" % (exp_a * NOMINAL_AC_V)
         return art, w, text
 
+    def feed_limit(self, want, m):
+        """Einspeisegrenzen wie im Victron-ESS-Menue: Einspeisung verhindern (auch
+        DESS-Sperre), max. Einspeisung. want = gewuenschte Abgabe in W."""
+        house = m["ac"] + m["grid"]                      # Verbrauch hinter dem Zaehler
+        if self.req["/Ess/DisableFeedIn"] or m.get("prevent_feedback"):
+            want = min(want, house)                      # Netz nicht negativ
+        if m.get("max_feedin_w") is not None and m["max_feedin_w"] >= 0:
+            want = min(want, house + m["max_feedin_w"])
+        return want
+
+    def pv_surplus(self, m):
+        """Abgabe fuer PV-Ueberschuss bei vollem Akku, wenn 'DC-gekoppelte PV:
+        Ueberschuss einspeisen' an ist (/Settings/CGwacs/OvervoltageFeedIn); sonst 0
+        (der Akku nimmt nichts mehr auf, das Solakon regelt die Module ab)."""
+        if m.get("pv_feedin") and m["soc"] >= m["maxsoc"]:
+            return max(0, m["pv"] - PV_LOSS_W)
+        return 0
+
     def _decide(self, m):
         """m: Messwerte. -> (art, w, text) mit art in app | abgabe | netz"""
         mode, ess = self.mode, self.ess_mode
@@ -269,7 +287,12 @@ class Control(object):
                 self.keep_active = True
             if self.keep_active and grid_charge_ok and m.get("grid") is not None:
                 return "netz", charge_w, "Geladen halten: %d W bis %d %%" % (charge_w, m["maxsoc"])
-            return "abgabe", 0, "Geladen halten: keine Abgabe"
+            if m.get("grid") is None or not feed_ok or soc < m["maxsoc"]:
+                return "abgabe", 0, "Geladen halten: keine Abgabe"
+            # Akku voll: PV deckt das Haus (kein Entladen), Ueberschuss nach Einstellung
+            want = max(m["ac"] + m["grid"], self.pv_surplus(m))
+            w = int(max(0, min(self.feed_limit(want, m), m["pv"] - PV_LOSS_W, export_max)))
+            return "abgabe", w, "Geladen halten, Akku voll: PV %d W" % w
 
         # Optimiert (mit/ohne BatteryLife): Netz auf Sollwert regeln
         if m.get("grid") is None:
@@ -286,10 +309,13 @@ class Control(object):
         setpoint = self.grid_setpoint(m)
         # Verbrauch hinter dem Zaehler = Netz + Solakon-Abgabe; davon bleibt der Sollwert am Netz
         want = m["ac"] + m["grid"] - setpoint
-        if self.req["/Ess/DisableFeedIn"] or m.get("prevent_feedback"):
-            want = min(want, m["ac"] + m["grid"])           # Netz nicht negativ
-        if m.get("max_feedin_w") is not None and m["max_feedin_w"] >= 0:
-            want = min(want, m["ac"] + m["grid"] + m["max_feedin_w"])
+        surplus = self.pv_surplus(m)
+        if surplus > want:
+            want = surplus
+            setpoint_text = "PV-Ueberschuss einspeisen"
+        else:
+            setpoint_text = None
+        want = self.feed_limit(want, m)
         if self.req["/Ess/DisableDischarge"]:
             want = min(want, m["pv"])
         if self.req["/Ess/DisableCharge"]:
@@ -306,6 +332,8 @@ class Control(object):
             w = int(max(0, min(want, m["pv"] - PV_LOSS_W, export_max)))
             return "abgabe", w, "Reserve %d %% erreicht: nur PV, %d W" % (reserve, w)
         w = int(max(0, min(want, export_max)))
+        if setpoint_text:
+            return "abgabe", w, "%s: %d W" % (setpoint_text, w)
         return "abgabe", w, "Eigenverbrauch %d W (Sollwert %d W)" % (w, setpoint)
 
     def run(self, m):

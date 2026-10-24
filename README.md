@@ -69,6 +69,7 @@ Bei einem Multi RS blendet Venus das ESS-Menü aus (*Einstellungen → ESS* zeig
 |---|---|
 | Netz-Sollwert (W) | `/Settings/CGwacs/AcPowerSetPoint` |
 | Einspeisung verhindern | `PreventFeedback` |
+| PV-Überschuss einspeisen (Victron: „DC-gekoppelte PV: Überschuss einspeisen“) | `OvervoltageFeedIn`. An: bei vollem Akku wird die PV abgegeben, höchstens bis zur max. Einspeisung bzw. 800 W. Aus: Abgabe nur bis zum Hausverbrauch, den Rest regelt das Solakon ab |
 | Max. Einspeisung, max. Abgabe WR (800 = unbegrenzt), max. Netzladen (1200 = unbegrenzt) | `MaxFeedInPower`, `MaxDischargePower`, `MaxChargePower` (unbegrenzt = -1) |
 | Peak Shaving Netzbezug / Einspeisung (A, 0 = aus), „auch unter der Reserve“ | `AcInputLimit`, `AcExportLimit`, `AlwaysPeakShave` |
 | Ladeleistung „Geladen halten“, Nachladeleistung unter der Reserve | `/Settings/Solakon/ChargePower`, `ReserveChargePower` |
@@ -91,7 +92,7 @@ Der Treiber übernimmt die Rolle der Multi-RS-Firmware. Venus gibt über das AC-
 | Gerätemodus **Nur Wechselrichter** | kein Laden aus dem Netz |
 | Gerätemodus **Aus** | App-Freigabe: Fernsteuerung aus, die Hersteller-App steuert (das Gerät wird nicht ausgeschaltet) |
 | ESS **Optimiert** (mit/ohne BatteryLife) | Netz auf den Sollwert regeln; unter der Reserve nur PV, 2 % darunter Nachladen mit `ReserveChargePower`. BatteryLife: Grenze +5 % je Tag ohne Volladung, −5 % bei Volladung, max. 80 % |
-| ESS **Akkus geladen halten** | Netzladen mit `ChargePower` bis Max-SoC (2 % Hysterese) |
+| ESS **Akkus geladen halten** | Netzladen mit `ChargePower` bis Max-SoC (2 % Hysterese); bei vollem Akku deckt die PV das Haus (ohne Entladen), Überschuss je nach „PV-Überschuss einspeisen“ |
 | ESS **Externe Steuerung** | App-Freigabe, solange niemand `/Ess/UseInverterPowerSetpoint` setzt |
 | Ladezeitpläne, Dynamic ESS | nativ: Venus setzt Sollwerte/Sperren, der Treiber führt sie aus |
 | Netz-Sollwert, max. Einspeisung, Einspeisung verhindern, WR-Leistungsgrenze | aus dem ESS-Menü (`/Settings/CGwacs/...`) |

@@ -52,6 +52,8 @@ class EssSettings(object):
              "W", 0, -800, 1200, 10, None),
             ("02_einspeisung_aus", "Netz: Einspeisung verhindern", TYPE_TOGGLE,
              ("venus", cg + "PreventFeedback"), None, 0, 0, 1, 1, None),
+            ("02b_pv_ueberschuss", "Netz: PV-\u00dcberschuss einspeisen", TYPE_TOGGLE,
+             ("venus", cg + "OvervoltageFeedIn"), None, 0, 0, 1, 1, None),
             ("03_max_einspeisung", "Netz: max. Einspeisung", TYPE_NUMERIC,
              ("venus", cg + "MaxFeedInPower"), "W", 0, 0, 800, 10, unlimited(800)),
             ("04_max_entladen", "Leistung: max. Abgabe", TYPE_NUMERIC,

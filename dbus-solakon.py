@@ -451,6 +451,8 @@ class Solakon(object):
             s = "com.victronenergy.settings"
             self.venus["max_feedin_w"] = get(s, "/Settings/CGwacs/MaxFeedInPower")
             self.venus["prevent_feedback"] = get(s, "/Settings/CGwacs/PreventFeedback")
+            # "DC-gekoppelte PV: Ueberschuss einspeisen"
+            self.venus["pv_feedin"] = get(s, "/Settings/CGwacs/OvervoltageFeedIn")
             self.venus["max_discharge_w"] = get(s, "/Settings/CGwacs/MaxDischargePower")
             self.venus["max_charge_w"] = get(s, "/Settings/CGwacs/MaxChargePower")
             self.venus["grid_setpoint"] = get(s, "/Settings/CGwacs/AcPowerSetPoint")
