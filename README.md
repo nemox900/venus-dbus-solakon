@@ -93,7 +93,10 @@ Bei einem Multi RS blendet Venus das ESS-Menü aus (*Einstellungen → ESS* zeig
 | **SoC: min. (Akkuschutz)** | Darunter wird nie entladen, auch nicht bei Netzausfall (Notstrom). | Register 46609 |
 | **SoC: Reserve (Netzbetrieb)** | Darunter kein Entladen für das Haus, solange Netz da ist (bleibt für Notstrom). Wie „Min-SoC“ im AC-System. | Register 46611 |
 | **VRM-DESS: Akkukapazität** | nutzbare Kapazität in kWh für die Planung von Dynamic ESS (z. B. 3 Akkumodule × 2,11 = 6,3 kWh; das BMS meldet die Nennenergie in Register 37635). 0 = Dynamic ESS bricht ab. | `/Settings/DynamicEss/BatteryCapacity` |
-| **VRM-DESS: max. …** | Grenzen für Dynamic ESS (kW). Normalerweise trägt VRM sie ein. -1 = nicht eingetragen: Dann bricht Dynamic ESS ab. Passend: Laden 1,2, Entladen 0,8, Einspeisung 0,8. **Netzbezug = Grenze des Hausanschlusses** (z. B. 3 × 35 A ≈ 24 kW), nicht die des Solakon; ein kleiner Wert lässt Dynamic ESS den Akku entladen, sobald das Haus mehr braucht. | `/Settings/DynamicEss/*Limit` |
+| **VRM-DESS: Akku laden max. / Akku entladen max.** | Was der Speicher kann (kW): 1,2 / 0,8. | `BatteryChargeLimit` / `BatteryDischargeLimit` |
+| **VRM-DESS: Hausanschluss Bezug** | Was der **Hausanschluss** aus dem Netz liefern darf (kW), nicht das Solakon: z. B. 3 × 35 A ≈ 24 kW. Ein kleiner Wert lässt Dynamic ESS den Akku entladen, sobald das Haus mehr braucht, auch wenn der Plan Sparen vorsieht. | `GridImportLimit` |
+| **VRM-DESS: Einspeisung max.** | Höchste Einspeisung ins Netz (kW), hier 0,8. | `GridExportLimit` |
+| | Alle VRM-DESS-Grenzen trägt normalerweise VRM ein. -1 = nicht eingetragen: Dann bricht Dynamic ESS ab. Sie liegen unter `/Settings/DynamicEss/`. | |
 | **WR-Abgabe: Limit (800=aus)** | Höchstens so viel Watt gibt das Solakon ins Haus ab. 800 = kein Limit. | `MaxDischargePower` |
 
 ## Steuerung
