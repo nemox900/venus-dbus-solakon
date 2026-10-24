@@ -3,6 +3,8 @@
 # Eigener kleiner Prozess, nur lesend, HTTP-API des Lesekopfs (config.ini).
 # Der Lesekopf liefert nur die saldierte Summe, darum genau eine virtuelle
 # Phase L1 (keine echte Phasenmessung, keine Spannungen/Stroeme).
+# In Venus angemeldet nur, wenn /Settings/Solakon/GridMeter = 1 (PowerTracker) ist
+# oder die Einstellung fehlt (dbus-solakon laeuft nicht).
 
 import configparser
 import json
@@ -24,6 +26,7 @@ CONFIG = configparser.ConfigParser()
 CONFIG.read([os.path.join(BASE, "config.default.ini"), os.path.join(BASE, "config.ini")])
 URL = "http://%s/api/v1/status?extended=true" % CONFIG.get("powertracker", "host")
 STALE_S = 15    # so lange darf total_rx_bytes stillstehen
+METER_POWERTRACKER = 1
 
 log = logging.getLogger("dbus-powertracker")
 
@@ -35,7 +38,7 @@ class PowerTracker(object):
         for p, v in (("/Mgmt/ProcessName", __file__), ("/Mgmt/ProcessVersion", VERSION),
                      ("/Mgmt/Connection", "HTTP PowerTracker"), ("/DeviceInstance", 30),
                      ("/ProductId", 0xFFFF), ("/ProductName", "Solakon PowerTracker IR"),
-                     ("/CustomName", "Netz (Phasensumme)"), ("/FirmwareVersion", None),
+                     ("/CustomName", "Netz (PowerTracker)"), ("/FirmwareVersion", None),
                      ("/Serial", None), ("/Connected", 0), ("/DeviceType", None),
                      ("/Role", "grid"), ("/NrOfPhases", 1), ("/Position", None)):
             s.add_path(p, v)
@@ -44,14 +47,33 @@ class PowerTracker(object):
                   "/PowerTracker/SignalStrength", "/PowerTracker/Rssi",
                   "/PowerTracker/FirmwareText"):
             s.add_path(p, None)
-        s.register()
+        self.sysbus = dbus.SystemBus()
+        self.sync()
         self.rx = None
         self.rx_t = 0
         GLib.timeout_add(2000, self.tick)
         log.info("PowerTracker-Treiber %s gestartet", VERSION)
 
+    def sync(self):
+        """Je nach Auswahl in den Solakon-Einstellungen an- oder abmelden."""
+        try:
+            sel = self.sysbus.get_object("com.victronenergy.settings",
+                                         "/Settings/Solakon/GridMeter").GetValue(
+                dbus_interface="com.victronenergy.BusItem")
+            want = int(sel) == METER_POWERTRACKER
+        except (dbus.exceptions.DBusException, TypeError, ValueError):
+            want = True
+        if want and self.s._dbusname is None:
+            self.s.register()
+            log.info("Netzzaehler PowerTracker angemeldet")
+        elif not want and self.s._dbusname is not None:
+            self.s._dbusname.__del__()
+            self.s._dbusname = None
+            log.info("Netzzaehler PowerTracker abgemeldet")
+
     def tick(self):
         try:
+            self.sync()
             self.update()
         except Exception:
             log.exception("Fehler im Zyklus")

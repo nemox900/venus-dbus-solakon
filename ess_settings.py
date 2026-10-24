@@ -25,6 +25,8 @@ EPS_VALUES = [0, 2, 3]      # 46613: aus, EPS, USV (1 ist im Protokoll nicht bel
 EPS_LABELS = ["Aus", "EPS (bei Netzausfall)", "USV (unterbrechungsfrei)"]
 MODE_VALUES = [3, 1, 2, 4]  # Venus /Mode: Ein, nur Ladegeraet, nur Wechselrichter, Aus
 MODE_LABELS = ["Ein: Venus regelt", "Nur laden", "Nur abgeben", "Aus: App regelt"]
+METER_LABELS = ["Solakon (Modbus)", "PowerTracker (HTTP)",
+                "Extern (anderer Z\u00e4hler)"]  # /Settings/Solakon/GridMeter 0..2
 ESS_LABELS = ["Optimiert + BatteryLife", "Optimiert", "Akku voll halten",
               "Extern (App, Zeitplan)"]       # Venus /Settings/Ess/Mode 0..3
 
@@ -59,12 +61,14 @@ class EssSettings(object):
         # vorne (Betrieb, Einspeisung, Max. Leistung, Netzladen, Notstrom, SoC, VRM-DESS,
         # WR-Abgabe), Erklaerungen in README.md. "Limit (800=aus)": Hoechstwert = kein Limit.
         # Quelle: ("venus", Pfad) | ("solakon", Schluessel) | ("reg", Adresse) |
-        #         ("mode",) | ("essmode",) | ("eps",)
+        #         ("mode",) | ("essmode",) | ("meter",) | ("eps",)
         self.outputs = [
             ("01_betrieb", "Betrieb: An / Aus", TYPE_DROPDOWN, ("mode",),
              MODE_LABELS, 0, 0, len(MODE_VALUES) - 1, 1, None),
             ("02_essmodus", "Betrieb: ESS-Modus", TYPE_DROPDOWN, ("essmode",),
              ESS_LABELS, 0, 0, len(ESS_LABELS) - 1, 1, None),
+            ("02b_netzzaehler", "Betrieb: Netzz\u00e4hler", TYPE_DROPDOWN, ("meter",),
+             METER_LABELS, 0, 0, len(METER_LABELS) - 1, 1, None),
             ("03_netz_sollwert", "Betrieb: Netz-Sollwert", TYPE_NUMERIC,
              ("venus", cg + "AcPowerSetPoint"), "W", 0, -800, 1200, 10, None),
             ("04_einspeisung_aus", "Einspeisung: verhindern", TYPE_TOGGLE,
@@ -163,6 +167,8 @@ class EssSettings(object):
             return MODE_VALUES.index(v) if v in MODE_VALUES else None
         if src[0] == "essmode":
             return int(d.settings["essmode"])
+        if src[0] == "meter":
+            return int(d.settings["gridmeter"])
         return None
 
     def refresh(self):
@@ -216,6 +222,8 @@ class EssSettings(object):
                 ok = d.ctl.set_mode(MODE_VALUES[int(raw)])
             elif src[0] == "essmode":
                 ok = d.ctl.set_ess_mode(int(raw))
+            elif src[0] == "meter":
+                ok = d.set_gridmeter(int(raw))
             else:
                 ok = False
         except dbus.exceptions.DBusException as e:

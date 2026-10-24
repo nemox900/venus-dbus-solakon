@@ -12,10 +12,11 @@ Kurz: Gerätemodus im Menü **Solakon ESS → „Betrieb: An / Aus“**. *Ein* =
 | `com.victronenergy.solarcharger.solakon_pv1` … `pv4` | 280–283 | je MPPT-Tracker ein Gerät: Spannung, Strom, Leistung, Tageserträge (30 Tage) |
 | `com.victronenergy.multi.solakon` | 276 | Hybrid-Wechselrichter mit Multi-RS-Schnittstelle; AC-Ausgang = Notstrom-Ausgang (EPS, 39201 ff., nur wenn eingeschaltet). Venus' `dbus-acsystem` macht daraus das AC-System (ESS, Zeitpläne, DVCC, Dynamic ESS) |
 | `com.victronenergy.temperature.solakon_wr` / `_gehaeuse` | 24 / 25 | Wechselrichter- und Gehäusetemperatur |
-| `com.victronenergy.grid.solakon_powertracker` | 30 | Netzzähler (saldierte Summe, eine virtuelle Phase) |
+| `com.victronenergy.grid.solakon_meter` | 31 | Netzzähler aus dem Solakon (Modbus 38814, Summenleistung, eine virtuelle Phase). Nur angemeldet, wenn als Netzzähler gewählt |
+| `com.victronenergy.grid.solakon_powertracker` | 30 | Netzzähler PowerTracker IR (HTTP, Summenleistung + Zählerstände Bezug/Einspeisung, eine virtuelle Phase). Nur angemeldet, wenn gewählt |
 | `com.victronenergy.switch.solakon_ess` | 91 | **Solakon ESS-Einstellungen**: Zahlenfelder, Auswahllisten und Schalter (siehe unten) |
 
-Seriennummern: Jedes Gerät hat eine eigene, aus der Solakon-Seriennummer abgeleitete Nummer (`<SN>` am Wechselrichter, `<SN>-BAT`, `-PV1` … `-PV4`, `-TWR`, `-TGH`, `-ESS`). Sie sind stabil über Neuinstallationen und gehören zu keinem echten Victron-Gerät. Die BMS-Seriennummer steht in `/Solakon/BmsSerial`.
+Seriennummern: Jedes Gerät hat eine eigene, aus der Solakon-Seriennummer abgeleitete Nummer (`<SN>` am Wechselrichter, `<SN>-BAT`, `-PV1` … `-PV4`, `-TWR`, `-TGH`, `-ESS`, `-NZ`). Sie sind stabil über Neuinstallationen und gehören zu keinem echten Victron-Gerät. Die BMS-Seriennummer steht in `/Solakon/BmsSerial`.
 
 Kennung für Dynamic ESS: Venus gibt Dynamic ESS nur für einen Multi RS ab einer bestimmten Firmware frei. Darum meldet `multi.solakon` die ProductId `0xA442` und die Firmware `0x11713`. Die echte Solakon-Firmware steht in `/Solakon/FirmwareText`. **In VRM kein Firmware-Update für dieses Gerät auslösen**, es kann nicht ankommen.
 
@@ -74,6 +75,7 @@ Bei einem Multi RS blendet Venus das ESS-Menü aus (*Einstellungen → ESS* zeig
 | Eintrag | Bedeutung | schreibt |
 |---|---|---|
 | **Betrieb: An / Aus** | Wer regelt das Solakon? *Ein: Venus regelt*. *Nur laden*: keine Abgabe. *Nur abgeben*: kein Laden aus dem Netz. *Aus: App regelt*: Venus gibt die Fernsteuerung ab, die Hersteller-App regelt, das Gerät läuft weiter. **Steht hier „Aus“, wirken alle anderen Einstellungen nicht.** | `/Mode` (wie Gerätemodus im AC-System) |
+| **Betrieb: Netzzähler** | Woher Venus und der Regler den Netzbezug nehmen. *Solakon (Modbus)*: den Wert, den das Solakon von seinem Zähler bekommt (Standard, keine weitere Einrichtung). *PowerTracker (HTTP)*: direkt vom Lesekopf, zusätzlich mit Zählerständen (kWh) für VRM. *Extern*: keiner von beiden meldet sich an, Venus nimmt einen anderen Netzzähler (Victron-Zähler, Shelly, …; 3 Phasen werden summiert). Gibt es dann keinen, gibt das Solakon 0 W ab („Netzzähler fehlt“). | `/Settings/Solakon/GridMeter` |
 | **Betrieb: ESS-Modus** | *Optimiert*: Netz auf den Sollwert regeln, Akku für das Haus nutzen. *+ BatteryLife*: zusätzlich wandernde Untergrenze, damit der Akku regelmäßig voll wird. *Akku voll halten*: aus dem Netz laden bis Max-SoC, nicht entladen. *Extern*: App regelt, außer ein Zeitplan oder Dynamic ESS gibt etwas vor. | `/Settings/Ess/Mode` (wie AC-System → ESS) |
 | **Betrieb: Netz-Sollwert** | Wie viel Watt am Zähler aus dem Netz kommen sollen. 0 = möglichst nichts beziehen, positiv = etwas Bezug zulassen (Puffer gegen Einspeisen), negativ = einspeisen. | `CGwacs/AcPowerSetPoint` |
 | **Einspeisung: verhindern** | Ein = nie ins Netz einspeisen. | `PreventFeedback` |

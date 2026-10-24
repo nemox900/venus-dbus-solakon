@@ -59,7 +59,10 @@ MULTI_RS_FIRMWARE = 0x11713
 SERIAL_SUFFIX = {"battery": "-BAT", "solarcharger.solakon_pv1": "-PV1",
                  "solarcharger.solakon_pv2": "-PV2", "solarcharger.solakon_pv3": "-PV3",
                  "solarcharger.solakon_pv4": "-PV4", "temperature.solakon_wr": "-TWR",
-                 "temperature.solakon_gehaeuse": "-TGH", "switch.solakon_ess": "-ESS"}
+                 "temperature.solakon_gehaeuse": "-TGH", "switch.solakon_ess": "-ESS",
+                 "grid.solakon_meter": "-NZ"}
+# /Settings/Solakon/GridMeter: welcher Netzzaehler sich in Venus anmeldet
+METER_SOLAKON, METER_POWERTRACKER, METER_EXTERN = 0, 1, 2
 
 log = logging.getLogger("dbus-solakon")
 
@@ -110,7 +113,7 @@ class Modbus(object):
 # Lesegruppen: (Name, Takt s, [(Adresse, Anzahl), ...]); max. 20 Register je Anfrage
 GROUPS = [
     ("fast", 2, [(37609, 4), (39070, 8), (39118, 2), (39134, 6), (39237, 2),
-                 (39279, 8), (46001, 7), (39201, 18)]),
+                 (39279, 8), (46001, 7), (39201, 18), (38801, 15)]),
     ("medium", 10, [(37617, 4), (37624, 13), (39063, 7), (39141, 1), (46018, 4),
                     (49228, 2)]),
     ("slow", 60, [(39149, 4), (39601, 16), (39617, 16), (46607, 5), (46612, 8),
@@ -224,6 +227,7 @@ class Solakon(object):
             "chargepower": ["/Settings/Solakon/ChargePower", 1200, 0, 1200],
             "reservechargepower": ["/Settings/Solakon/ReserveChargePower", 300, 0, 1200],
             "acinlimit": ["/Settings/Solakon/AcInCurrentLimit", AC_IN_LIMIT_A, 0.0, AC_IN_LIMIT_A],
+            "gridmeter": ["/Settings/Solakon/GridMeter", METER_SOLAKON, 0, 2],
         }, None)
         self.ctl = Control(self.mb, self.settings, self.state, CONTROL_ENABLED)
 
@@ -340,11 +344,27 @@ class Solakon(object):
             s.add_path("/Status", None)
             self.temp[key] = s
 
-        self.all = [self.batt, self.multi] + list(self.pv.values()) + list(self.temp.values())
+        # Netzzaehler aus dem Solakon (38801 ff. "Meter1/CT1"). Das Solakon gibt nur die
+        # Summenleistung seines Zaehlers weiter (Phasen, Spannungen, Zaehlerstaende = 0),
+        # darum eine virtuelle Phase wie beim PowerTracker. Angemeldet nur, wenn er in
+        # /Settings/Solakon/GridMeter gewaehlt ist (Venus nimmt sonst den Netzzaehler
+        # mit der kleinsten Instanz, die Wahl waere Zufall).
+        m = self.meter = new_service("com.victronenergy.grid.solakon_meter", 31,
+                                     "Solakon ONE Netzz\u00e4hler", "Netz (Solakon)")
+        for p, v in (("/Role", "grid"), ("/NrOfPhases", 1), ("/DeviceType", None),
+                     ("/Position", None)):
+            m.add_path(p, v)
+        for p in ("/Ac/Power", "/Ac/L1/Power", "/Ac/Energy/Forward", "/Ac/Energy/Reverse"):
+            m.add_path(p, None)
+
+        self.all = [self.batt, self.multi] + list(self.pv.values()) + list(self.temp.values()) \
+            + [self.meter]
         # Einstell-Geraet: nicht in self.all, bleibt auch ohne Solakon-Verbindung bedienbar
         self.ess = EssSettings(self, new_service)
         for s in self.all + [self.ess.s]:
-            s.register()
+            if s is not self.meter:
+                s.register()
+        self.sync_meter()
         GLib.timeout_add(2000, self.tick)
         GLib.timeout_add(10000, self.ess.refresh)
         self.ess.refresh()
@@ -426,6 +446,26 @@ class Solakon(object):
         log.info("AC-Eingangsgrenze -> %.1f A", v)
         return True
 
+    def sync_meter(self):
+        """Solakon-Netzzaehler je nach Auswahl in Venus an- oder abmelden."""
+        want = int(self.settings["gridmeter"]) == METER_SOLAKON
+        m = self.meter
+        if want and m._dbusname is None:
+            m.register()
+            log.info("Netzzaehler Solakon (Modbus) angemeldet")
+        elif not want and m._dbusname is not None:
+            m._dbusname.__del__()       # gibt den Dienstnamen frei (vedbus macht es genauso)
+            m._dbusname = None
+            log.info("Netzzaehler Solakon (Modbus) abgemeldet")
+
+    def set_gridmeter(self, v):
+        if v not in (METER_SOLAKON, METER_POWERTRACKER, METER_EXTERN):
+            return False
+        self.settings["gridmeter"] = v
+        log.info("Netzzaehler-Quelle -> %d", v)
+        self.sync_meter()
+        return True
+
     def set_power(self, key, v):
         if not CONTROL_ENABLED:
             return reject(key, v)
@@ -447,7 +487,14 @@ class Solakon(object):
             except dbus.exceptions.DBusException:
                 return None
             return None if isinstance(v, dbus.Array) else float(v)
-        self.venus["grid"] = get("com.victronenergy.system", "/Ac/Grid/L1/Power")
+        # Summe aller Phasen: unsere Zaehler melden nur L1, ein externer 3-Phasen-Zaehler alle
+        # Ohne Netzzaehler nimmt Venus den AC-Eingang des Wechselrichters als "Netz"
+        # (/Ac/Grid/DeviceType ist dann leer) - das waere unsere eigene Abgabe.
+        ph = []
+        if get("com.victronenergy.system", "/Ac/Grid/DeviceType") is not None:
+            ph = [get("com.victronenergy.system", "/Ac/Grid/L%d/Power" % n) for n in (1, 2, 3)]
+            ph = [v for v in ph if v is not None]
+        self.venus["grid"] = sum(ph) if ph else None
         if time.monotonic() - self.venus_t > 10:
             s = "com.victronenergy.settings"
             self.venus["max_feedin_w"] = get(s, "/Settings/CGwacs/MaxFeedInPower")
@@ -501,6 +548,7 @@ class Solakon(object):
     def tick(self):
         try:
             self.reg.poll(self.mb)
+            self.sync_meter()
             self.publish()
             self.state.save()
         except Exception:
@@ -521,7 +569,8 @@ class Solakon(object):
                             "/InstalledCapacity", "/N2kSystemInstance", "/Devices/0/Gateway",
                             "/Devices/0/Nad", "/Ac/NumberOfPhases", "/Ac/NumberOfAcInputs",
                             "/Mode", "/Settings/Ess/Mode", "/Ac/In/1/CurrentLimit",
-                            "/TemperatureType", "/NrOfTrackers") or "/Ess/" in p \
+                            "/TemperatureType", "/NrOfTrackers", "/Role",
+                            "/NrOfPhases") or "/Ess/" in p \
                             or p.startswith("/History/Daily") or p.startswith("/Yield/User"):
                         continue
                     w[p] = None
@@ -548,6 +597,11 @@ class Solakon(object):
         countdown = R.g(46007)
         med = R.fresh("medium", 60)
         slow = R.fresh("slow", 300)
+
+        # --- Netzzaehler (38814: Summe, 0,1 W, + = Bezug; 38801: 1 = Zaehler verbunden)
+        mp = s32([R.g(38814), R.g(38815)], 0) / 10.0 if R.g(38801) == 1 else None
+        self.set_all(self.meter, {"/Connected": 1 if mp is not None else 0,
+                                  "/Ac/Power": mp, "/Ac/L1/Power": mp})
 
         # --- Akku
         b = {"/Connected": 1, "/Soc": soc, "/Dc/0/Voltage": bv, "/Dc/0/Current": round(bi, 1),
