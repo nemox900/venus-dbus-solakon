@@ -43,8 +43,8 @@ UNIT = CONFIG.getint("solakon", "unit")
 CONTROL_ENABLED = CONFIG.getboolean("control", "enabled", fallback=False)
 STATE_FILE = os.path.join(BASE, "state.json")
 STALE_S = 10            # so lange duerfen Schnellwerte alt sein
-CAPACITY_AH = 240.0     # Datenblatt: 4 x 2,11 kWh / 35,2 V
-NOMINAL_V = 35.2
+NOMINAL_V = 35.2        # Datenblatt: Nennspannung, 2,11 kWh je Akkumodul
+# Kapazitaet kommt aus dem BMS (37635 Nennenergie, 0,01 kWh; z. B. 3 Module = 633)
 AC_IN_LIMIT_A = 5.4     # Datenblatt WF2000M: AC-Eingang max. 5,4 A
 INVERTER_W = 800
 # Venus (dbus-acsystem) gibt Dynamic ESS nur fuer Multi RS ab einer bestimmten
@@ -245,7 +245,8 @@ class Solakon(object):
                   "/Solakon/MaxChargePower", "/Solakon/MaxDischargePower",
                   "/Solakon/BmsSerial"):
             self.batt.add_path(p, None)
-        self.batt.add_path("/InstalledCapacity", CAPACITY_AH)
+        self.batt.add_path("/InstalledCapacity", None)
+        self.capacity_ah = None
 
         self.pv = {}
         for n in range(1, 5):
@@ -550,11 +551,18 @@ class Solakon(object):
 
         # --- Akku
         b = {"/Connected": 1, "/Soc": soc, "/Dc/0/Voltage": bv, "/Dc/0/Current": round(bi, 1),
-             "/Dc/0/Power": bp, "/Capacity": round(CAPACITY_AH * soc / 100.0, 1),
-             "/ConsumedAmphours": round(-CAPACITY_AH * (100 - soc) / 100.0, 1)}
+             "/Dc/0/Power": bp}
+        design = R.g(37635) if med else None
+        if design:
+            self.capacity_ah = round(design * 10.0 / NOMINAL_V, 1)
+            b["/InstalledCapacity"] = self.capacity_ah
+        cap = self.capacity_ah
+        if cap:
+            b["/Capacity"] = round(cap * soc / 100.0, 1)
+            b["/ConsumedAmphours"] = round(-cap * (100 - soc) / 100.0, 1)
         minsoc = R.g(46609) if slow else None
-        if bp < -5 and minsoc is not None and soc > minsoc:
-            wh = (soc - minsoc) / 100.0 * CAPACITY_AH * NOMINAL_V
+        if bp < -5 and minsoc is not None and soc > minsoc and cap:
+            wh = (soc - minsoc) / 100.0 * cap * NOMINAL_V
             b["/TimeToGo"] = int(wh / -bp * 3600)
         else:
             b["/TimeToGo"] = None
@@ -727,8 +735,8 @@ class Solakon(object):
         with self.multi as w:
             w["/ProductName"] = "%s Hybrid" % model
         with self.batt as w:
-            # 37032: Anzahl Slave-Module laut BMS, Kopfmodul zaehlt zusaetzlich
-            w["/System/NrOfModulesOnline"] = modules + 1 if modules is not None else None
+            # 37032: Anzahl Akkumodule laut BMS (passt zur Nennenergie 37635: 3 x 2,11 kWh)
+            w["/System/NrOfModulesOnline"] = modules
             w["/System/NrOfBatteries"] = 1
         with self.batt as w:
             w["/Solakon/BmsSerial"] = bms_sn
