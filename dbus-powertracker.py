@@ -18,7 +18,7 @@ import dbus.mainloop.glib
 from gi.repository import GLib
 from vedbus import VeDbusService
 
-VERSION = "0.4.2"
+VERSION = "0.7.0"
 BASE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = configparser.ConfigParser()
 CONFIG.read([os.path.join(BASE, "config.default.ini"), os.path.join(BASE, "config.ini")])

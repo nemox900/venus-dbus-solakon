@@ -33,7 +33,7 @@ from vedbus import VeDbusService
 from control import Control
 from ess_settings import EssSettings
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 BASE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = configparser.ConfigParser()
 CONFIG.read([os.path.join(BASE, "config.default.ini"), os.path.join(BASE, "config.ini")])

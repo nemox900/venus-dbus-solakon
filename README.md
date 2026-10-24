@@ -1,6 +1,8 @@
 # Solakon ONE für Venus OS (Mod)
 
-Bindet einen Solakon ONE (WF2000M) und den Solakon PowerTracker IR als native Venus-OS-Geräte ein. Läuft auf jedem GX-Gerät (Cerbo GX, Ekrano, Raspberry Pi, VM) mit Venus OS 3.85, ohne Änderungen am Victron-Code.
+Bindet einen Solakon ONE (WF2000M) und den Solakon PowerTracker IR als native Venus-OS-Geräte ein und steuert den Speicher über Venus: ESS, Ladezeitpläne, Dynamic ESS, Peak Shaving, VRM. Ohne Hersteller-Cloud und ohne Änderungen am Victron-Code. Läuft auf jedem GX-Gerät (Cerbo GX, Ekrano, Raspberry Pi, VM) mit Venus OS 3.85.
+
+Kurz: Gerätemodus im Menü **Solakon ESS → „Betrieb: An / Aus“**. *Ein* = Venus regelt, *Aus* = die Hersteller-App regelt wieder (das Gerät läuft weiter).
 
 ## Geräte
 
@@ -32,9 +34,9 @@ tools/deploy.sh <ip-des-gx-geraets> [ssh-port]
 **Von Hand** mit dem Release-Archiv (`tools/make-release.sh` → `dist/dbus-solakon-<version>.tar.gz`):
 
 ```
-scp dbus-solakon-0.5.1.tar.gz root@<gx>:/tmp/
+scp dbus-solakon-0.7.0.tar.gz root@<gx>:/tmp/
 ssh root@<gx>
-tar xzf /tmp/dbus-solakon-0.5.1.tar.gz -C /tmp && sh /tmp/dbus-solakon/install.sh
+tar xzf /tmp/dbus-solakon-0.7.0.tar.gz -C /tmp && sh /tmp/dbus-solakon/install.sh
 vi /data/dbus-solakon/config.ini                 # IP-Adressen, [control] enabled
 svc -t /service/dbus-solakon /service/dbus-powertracker
 ```
@@ -58,6 +60,10 @@ Die Einstellungen im Solakon selbst (Ladegrenzen, EPS) bleiben so, wie sie zulet
 | `config.ini` | eigene Einstellungen (wird von `install.sh` einmalig angelegt) |
 | `state.json` | Tracker-Erträge, wird vom Treiber geschrieben |
 | `install.sh`, `uninstall.sh`, `start.sh` | Installation, Entfernen, Einhängen beim Boot |
+| `dbus-solakon.py` | Treiber: Modbus lesen, alle Geräte außer Netzzähler, Schreibbefehle |
+| `control.py` | Regler (Rolle der Multi-RS-Firmware) |
+| `ess_settings.py` | Einstell-Gerät „Solakon ESS“ |
+| `dbus-powertracker.py` | Netzzähler (HTTP) |
 | `tools/` | nur im Git: Release-Archiv bauen, per SSH verteilen |
 | `service-*/` | daemontools-Dienste; Logs unter `/var/log/dbus-solakon/current` und `/var/log/dbus-powertracker/current` |
 
@@ -105,7 +111,8 @@ Der Treiber übernimmt die Rolle der Multi-RS-Firmware. Venus gibt über das AC-
 | Netz-Sollwert, max. Einspeisung, Einspeisung verhindern, WR-Leistungsgrenze | aus dem ESS-Menü (`/Settings/CGwacs/...`) |
 | Min-SoC (Netzreserve) | 46611 |
 | **AC-Eingangsstrom** (AC-System, 0–5,4 A) | begrenzt Netzladen plus Notstromverbraucher auf Grenze × 230 V. Software-Grenze im Regler, wird in `/Settings/Solakon/AcInCurrentLimit` gespeichert. Gilt nur, solange Venus steuert |
-| **Peak Shaving** (ESS-Menü: Netzbezug begrenzen `AcInputLimit`, Einspeisung begrenzen `AcExportLimit`, „Immer“ `AlwaysPeakShave`) | Netzbezug über der Grenze: Netzladen wird gedrosselt, sonst gibt der Akku bis 800 W zusätzlich ab. Normal nur über der aktiven Reserve, bei „Immer“ bis zum physischen Min-SoC (46609). Die Grenzen in A gelten für die **Summe** aller Phasen (× 230 V), weil der Zähler nur die Summe liefert |
+| **Peak Shaving** (Menü „Max. Leistung: Netzbezug“ = `AcInputLimit`, „bis Akkuschutz“ = `AlwaysPeakShave`; `AcExportLimit` wird beachtet, steht aber nicht im Menü) | Netzbezug über der Grenze: Netzladen wird gedrosselt, sonst gibt der Akku bis 800 W zusätzlich ab. Normal nur über der aktiven Reserve, sonst bis zum Akkuschutz (46609). Die Grenzen gelten für die **Summe** aller Phasen, weil der Zähler nur die Summe liefert |
+| **PV-Überschuss** (`OvervoltageFeedIn`) | Akku voll: an = PV abgeben bis Einspeise-Limit/800 W, aus = nur bis zum Hausverbrauch, Rest abregeln |
 | Netz-Sollwert | aus dem ESS-Menü (`AcPowerSetPoint`); setzt Venus selbst einen Sollwert (Dynamic ESS, extern), gilt der für 60 s vorrangig |
 | Max. Ladeleistung (`MaxChargePower`) | begrenzt das Netzladen zusätzlich |
 
@@ -114,4 +121,13 @@ Zusätzliche Pfade am `multi.solakon`: `/Solakon/SetEpsOutput` (46613: 0 aus, 2 
 Zwischen Abgabe und Netzladen wird frühestens nach 30 s gewechselt (bis dahin 0 W im alten Modus), damit das Gerät bei einem Sollwert um 0 nicht ständig umschaltet.
 
 Grenzen: Abgabe max. 800 W, Netzladen max. 1200 W (Datenblatt). Befehle werden alle 30 s mit 90 s Timeout erneuert; endet der Treiber, gibt er die Fernsteuerung sofort ab, spätestens nach 90 s übernimmt das Gerät wieder selbst. Nie geschrieben werden: Work mode 49203, Ein/Aus 49077/49078, 45005/45007, Export Power Limit 46616, MPPT-Schalter 49210.
+
+## VRM
+
+Die Daten aller Geräte gehen wie bei einem echten GX-Gerät nach VRM (Portal-Modus „Voll“). Remote Console und das Menü „Solakon ESS“ funktionieren auch über VRM. Dynamic ESS wird in VRM eingeschaltet. Die Grenzen dafür stehen unter „VRM-DESS“ im Menü und müssen gesetzt sein, sonst bricht Dynamic ESS ab.
+
+Nicht möglich bzw. nicht tun:
+- **kein Firmware-Update** für den Wechselrichter („Multi RS“) über VRM auslösen
+- keine Fernkonfiguration wie bei Victron-Geräten (VictronConnect Remote, VEConfigure)
+- Venus-Firmware nur nach Prüfung aktualisieren (AutoUpdate auf „nur prüfen“); `/data` mit dem Mod bleibt dabei erhalten
 
