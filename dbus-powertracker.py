@@ -24,7 +24,8 @@ VERSION = "0.7.0"
 BASE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = configparser.ConfigParser()
 CONFIG.read([os.path.join(BASE, "config.default.ini"), os.path.join(BASE, "config.ini")])
-URL = "http://%s/api/v1/status?extended=true" % CONFIG.get("powertracker", "host")
+PT_HOST = CONFIG.get("powertracker", "host", fallback="").strip()
+URL = "http://%s/api/v1/status?extended=true" % PT_HOST
 STALE_S = 15    # so lange darf total_rx_bytes stillstehen
 METER_POWERTRACKER = 1
 
@@ -118,6 +119,11 @@ class PowerTracker(object):
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    if not PT_HOST:
+        # nicht eingerichtet; start.sh haengt den Dienst dann gar nicht erst ein
+        log.info("PowerTracker nicht eingerichtet ([powertracker] host leer)")
+        while True:
+            time.sleep(3600)
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     PowerTracker()
     GLib.MainLoop().run()

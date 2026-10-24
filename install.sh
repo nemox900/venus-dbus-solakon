@@ -3,6 +3,11 @@
 #
 #   sh install.sh
 #
+# Fragt nach der IP des Solakon und ob ein Solakon PowerTracker (Lesekopf am
+# Hauszaehler) eingerichtet werden soll. Ohne Terminal (z. B. tools/deploy.sh)
+# wird nicht gefragt; dann gelten die Umgebungsvariablen, sonst bleibt config.ini:
+#   SOLAKON_HOST=<ip>   POWERTRACKER_HOST=<ip>   POWERTRACKER_HOST=nein
+#
 # Laeuft aus dem entpackten Paket (z. B. /tmp/dbus-solakon) oder direkt aus
 # /data/dbus-solakon. Ziel ist immer /data/dbus-solakon (uebersteht Firmware-Updates).
 # config.ini und state.json bleiben bei einem Update erhalten.
@@ -33,10 +38,58 @@ cd "$BASE"
 chmod 755 dbus-solakon.py dbus-powertracker.py install.sh uninstall.sh start.sh \
 	service-*/run service-*/log/run
 if [ -f config.ini ]; then
-	say "config.ini vorhanden, bleibt unveraendert"
+	say "config.ini vorhanden"
 else
 	cp config.default.ini config.ini
-	say "config.ini angelegt (Steuerung aus). Adressen pruefen: $BASE/config.ini"
+	say "config.ini angelegt (Steuerung aus)"
+fi
+
+# --- Adressen: fragen (mit Terminal) oder aus Umgebungsvariablen ---
+ini_get() {     # Abschnitt Schluessel
+	sed -n "/^\[$1\]/,/^\[/s/^$2 *= *//p" config.ini | head -n 1 | tr -d ' '
+}
+ini_set() {     # Abschnitt Schluessel Wert
+	if [ -n "$(sed -n "/^\[$1\]/,/^\[/{/^$2 *=/p}" config.ini)" ]; then
+		sed -i "/^\[$1\]/,/^\[/s/^$2 *=.*/$2 = $3/" config.ini
+	else
+		grep -q "^\[$1\]" config.ini || printf '\n[%s]\n' "$1" >> config.ini
+		sed -i "/^\[$1\]/a $2 = $3" config.ini
+	fi
+}
+sol=$(ini_get solakon host); [ -n "$sol" ] || sol=$(sed -n '/^\[solakon\]/,/^\[/s/^host *= *//p' config.default.ini)
+pt=$(ini_get powertracker host)
+if [ -t 0 ]; then
+	printf '[solakon] IP-Adresse des Solakon ONE (Modbus-TCP) [%s]: ' "$sol"
+	read -r a; [ -n "$a" ] && sol=$a
+	if [ -n "$pt" ]; then frage="J/n"; else frage="j/N"; fi
+	printf '[solakon] Solakon PowerTracker (Lesekopf am Hauszaehler) als Netzzaehler einrichten? [%s]: ' "$frage"
+	read -r a
+	case "$a" in
+		[jJyY]*) ja=1 ;;
+		[nN]*) ja=0 ;;
+		*) [ -n "$pt" ] && ja=1 || ja=0 ;;
+	esac
+	if [ $ja = 1 ]; then
+		printf '[solakon] IP-Adresse des PowerTracker [%s]: ' "$pt"
+		read -r a; [ -n "$a" ] && pt=$a
+		[ -n "$pt" ] || { say "keine IP angegeben, PowerTracker wird nicht eingerichtet"; ja=0; }
+	fi
+	[ $ja = 1 ] || pt=""
+else
+	[ -n "${SOLAKON_HOST:-}" ] && sol=$SOLAKON_HOST
+	case "${POWERTRACKER_HOST:-}" in
+		"") ;;
+		nein|no|0) pt="" ;;
+		*) pt=$POWERTRACKER_HOST ;;
+	esac
+fi
+ini_set solakon host "$sol"
+ini_set powertracker host "$pt"
+say "Solakon: $sol"
+if [ -n "$pt" ]; then
+	say "PowerTracker: $pt (im Menue Solakon ESS unter \"Betrieb: Netzzaehler\" waehlbar)"
+else
+	say "PowerTracker: nicht eingerichtet"
 fi
 
 # --- Start bei jedem Boot ---
@@ -45,15 +98,16 @@ chmod 755 /data/rc.local
 grep -qx "$BASE/start.sh" /data/rc.local || echo "$BASE/start.sh" >> /data/rc.local
 
 # --- Dienste einhaengen bzw. neu starten ---
+dienste=solakon; [ -n "$pt" ] && dienste="solakon powertracker"
 neu=""
-for n in solakon powertracker; do [ -e /service/dbus-$n ] || neu="$neu $n"; done
+for n in $dienste; do [ -e /service/dbus-$n ] || neu="$neu $n"; done
 "$BASE/start.sh"
-for n in solakon powertracker; do
+for n in $dienste; do
 	case " $neu " in
 		*" $n "*) ;;                                    # startet svscan selbst
 		*) svc -u /service/dbus-$n; svc -t /service/dbus-$n ;;   # Update: neu starten
 	esac
 done
 sleep 8
-for n in solakon powertracker; do svstat /service/dbus-$n 2>/dev/null || true; done
+for n in $dienste; do svstat /service/dbus-$n 2>/dev/null || true; done
 say "fertig: Version $(sed -n 's/^VERSION = "\(.*\)"/\1/p' dbus-solakon.py). Log: tail -f /var/log/dbus-solakon/current"

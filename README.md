@@ -13,7 +13,7 @@ Kurz: Gerätemodus im Menü **Solakon ESS → „Betrieb: An / Aus“**. *Ein* =
 | `com.victronenergy.multi.solakon` | 276 | Hybrid-Wechselrichter mit Multi-RS-Schnittstelle; AC-Ausgang = Notstrom-Ausgang (EPS, 39201 ff., nur wenn eingeschaltet). Venus' `dbus-acsystem` macht daraus das AC-System (ESS, Zeitpläne, DVCC, Dynamic ESS) |
 | `com.victronenergy.temperature.solakon_wr` / `_gehaeuse` | 24 / 25 | Wechselrichter- und Gehäusetemperatur |
 | `com.victronenergy.grid.solakon_meter` | 31 | Netzzähler aus dem Solakon (Modbus 38814, Summenleistung, eine virtuelle Phase). Nur angemeldet, wenn als Netzzähler gewählt |
-| `com.victronenergy.grid.solakon_powertracker` | 30 | Netzzähler PowerTracker IR (HTTP, Summenleistung + Zählerstände Bezug/Einspeisung, eine virtuelle Phase). Nur angemeldet, wenn gewählt |
+| `com.victronenergy.grid.solakon_powertracker` | 30 | optional: Netzzähler PowerTracker IR (HTTP, Summenleistung + Zählerstände Bezug/Einspeisung, eine virtuelle Phase). Nur wenn bei der Installation eingerichtet und im Menü gewählt |
 | `com.victronenergy.switch.solakon_ess` | 91 | **Solakon ESS-Einstellungen**: Zahlenfelder, Auswahllisten und Schalter (siehe unten) |
 
 Seriennummern: Jedes Gerät hat eine eigene, aus der Solakon-Seriennummer abgeleitete Nummer (`<SN>` am Wechselrichter, `<SN>-BAT`, `-PV1` … `-PV4`, `-TWR`, `-TGH`, `-ESS`, `-NZ`). Sie sind stabil über Neuinstallationen und gehören zu keinem echten Victron-Gerät. Die BMS-Seriennummer steht in `/Solakon/BmsSerial`.
@@ -38,9 +38,11 @@ tools/deploy.sh <ip-des-gx-geraets> [ssh-port]
 scp dbus-solakon-0.7.0.tar.gz root@<gx>:/tmp/
 ssh root@<gx>
 tar xzf /tmp/dbus-solakon-0.7.0.tar.gz -C /tmp && sh /tmp/dbus-solakon/install.sh
-vi /data/dbus-solakon/config.ini                 # IP-Adressen, [control] enabled
-svc -t /service/dbus-solakon /service/dbus-powertracker
+vi /data/dbus-solakon/config.ini                 # [control] enabled = 1: Venus steuert
+svc -t /service/dbus-solakon
 ```
+
+`install.sh` fragt nach der IP-Adresse des Solakon und ob ein **Solakon PowerTracker** (Lesekopf am Hauszähler) eingerichtet werden soll (Enter übernimmt den Wert in Klammern). Ohne Terminal (z. B. `tools/deploy.sh`) wird nicht gefragt. Dann gelten die Umgebungsvariablen `SOLAKON_HOST=<ip>` und `POWERTRACKER_HOST=<ip>` bzw. `POWERTRACKER_HOST=nein`, sonst bleibt `config.ini` wie sie ist. Ohne PowerTracker läuft sein Dienst nicht, und er steht nicht in der Zählerauswahl.
 
 `install.sh` prüft die Voraussetzungen (Venus, velib_python, dbus-acsystem, pymodbus), kopiert die Dateien und startet die Dienste neu. Ein Update geht genauso; `config.ini`, `state.json` und die Einstellungen bleiben dabei erhalten.
 
@@ -75,7 +77,7 @@ Bei einem Multi RS blendet Venus das ESS-Menü aus (*Einstellungen → ESS* zeig
 | Eintrag | Bedeutung | schreibt |
 |---|---|---|
 | **Betrieb: An / Aus** | Wer regelt das Solakon? *Ein: Venus regelt*. *Nur laden*: keine Abgabe. *Nur abgeben*: kein Laden aus dem Netz. *Aus: App regelt*: Venus gibt die Fernsteuerung ab, die Hersteller-App regelt, das Gerät läuft weiter. **Steht hier „Aus“, wirken alle anderen Einstellungen nicht.** | `/Mode` (wie Gerätemodus im AC-System) |
-| **Betrieb: Netzzähler** | Woher Venus und der Regler den Netzbezug nehmen. *Solakon (Modbus)*: den Wert, den das Solakon von seinem Zähler bekommt (Standard, keine weitere Einrichtung). *PowerTracker (HTTP)*: direkt vom Lesekopf, zusätzlich mit Zählerständen (kWh) für VRM. *Extern*: keiner von beiden meldet sich an, Venus nimmt einen anderen Netzzähler (Victron-Zähler, Shelly, …; 3 Phasen werden summiert). Gibt es dann keinen, gibt das Solakon 0 W ab („Netzzähler fehlt“). | `/Settings/Solakon/GridMeter` |
+| **Betrieb: Netzzähler** | Woher Venus und der Regler den Netzbezug nehmen. *Solakon (Modbus)*: den Wert, den das Solakon von seinem Zähler bekommt (Standard, keine weitere Einrichtung). *Venus OS (anderer Zähler)*: keiner von unseren meldet sich an, Venus nimmt einen anderen Netzzähler (Victron-Zähler, Shelly, …; 3 Phasen werden summiert). *PowerTracker (HTTP)*: nur in der Liste, wenn bei der Installation eingerichtet; direkt vom Lesekopf, zusätzlich mit Zählerständen (kWh) für VRM. Gibt es dann keinen, gibt das Solakon 0 W ab („Netzzähler fehlt“). | `/Settings/Solakon/GridMeter` |
 | **Betrieb: ESS-Modus** | *Optimiert*: Netz auf den Sollwert regeln, Akku für das Haus nutzen. *+ BatteryLife*: zusätzlich wandernde Untergrenze, damit der Akku regelmäßig voll wird. *Akku voll halten*: aus dem Netz laden bis Max-SoC, nicht entladen. *Extern*: App regelt, außer ein Zeitplan oder Dynamic ESS gibt etwas vor. | `/Settings/Ess/Mode` (wie AC-System → ESS) |
 | **Betrieb: Netz-Sollwert** | Wie viel Watt am Zähler aus dem Netz kommen sollen. 0 = möglichst nichts beziehen, positiv = etwas Bezug zulassen (Puffer gegen Einspeisen), negativ = einspeisen. | `CGwacs/AcPowerSetPoint` |
 | **Einspeisung: verhindern** | Ein = nie ins Netz einspeisen. | `PreventFeedback` |

@@ -41,6 +41,7 @@ HOST = CONFIG.get("solakon", "host")
 PORT = CONFIG.getint("solakon", "port")
 UNIT = CONFIG.getint("solakon", "unit")
 CONTROL_ENABLED = CONFIG.getboolean("control", "enabled", fallback=False)
+POWERTRACKER = bool(CONFIG.get("powertracker", "host", fallback="").strip())
 STATE_FILE = os.path.join(BASE, "state.json")
 STALE_S = 10            # so lange duerfen Schnellwerte alt sein
 NOMINAL_V = 35.2        # Datenblatt: Nennspannung, 2,11 kWh je Akkumodul
@@ -361,10 +362,13 @@ class Solakon(object):
             m.add_path(p, None)
 
         self.acsystem_named = False
+        if int(self.settings["gridmeter"]) == METER_POWERTRACKER and not POWERTRACKER:
+            log.info("PowerTracker nicht eingerichtet: Netzzaehler -> Solakon (Modbus)")
+            self.settings["gridmeter"] = METER_SOLAKON
         self.all = [self.batt, self.multi] + list(self.pv.values()) + list(self.temp.values()) \
             + [self.meter]
         # Einstell-Geraet: nicht in self.all, bleibt auch ohne Solakon-Verbindung bedienbar
-        self.ess = EssSettings(self, new_service)
+        self.ess = EssSettings(self, new_service, POWERTRACKER)
         for s in self.all + [self.ess.s]:
             if s is not self.meter:
                 s.register()
@@ -478,7 +482,8 @@ class Solakon(object):
             log.info("Netzzaehler Solakon (Modbus) abgemeldet")
 
     def set_gridmeter(self, v):
-        if v not in (METER_SOLAKON, METER_POWERTRACKER, METER_EXTERN):
+        if v not in (METER_SOLAKON, METER_EXTERN) and not (v == METER_POWERTRACKER
+                                                          and POWERTRACKER):
             return False
         self.settings["gridmeter"] = v
         log.info("Netzzaehler-Quelle -> %d", v)
