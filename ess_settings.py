@@ -35,6 +35,13 @@ def unlimited(maxval):
             lambda d: -1 if d >= maxval else d)
 
 
+def amps_as_watts():
+    """Venus speichert die Netzbezugsgrenze in A (-1 = aus); angezeigt in W (x 230 V,
+    Summe aller Phasen), 0 W = aus."""
+    return (lambda v: 0 if v is None or v < 0 else v * 230,
+            lambda d: -1 if d <= 0 else d / 230.0)
+
+
 def zero_off():
     """-1 (= aus) wird als 0 angezeigt, 0 als -1 geschrieben."""
     return (lambda v: 0 if v is None or v < 0 else v,
@@ -49,7 +56,7 @@ class EssSettings(object):
         # (Kanal, Name, Typ, Quelle, Einheit bzw. Auswahltexte, Nachkommastellen, min, max,
         #  Schritt, Umrechnung)
         # Die Oberflaeche sortiert nach dem Namen und zeigt nur ~30 Zeichen: Oberbegriff
-        # vorne (Betrieb, Einspeisung, Netzladen, Notstrom, Peak Shaving, SoC, VRM-DESS,
+        # vorne (Betrieb, Einspeisung, Max. Leistung, Netzladen, Notstrom, SoC, VRM-DESS,
         # WR-Abgabe), Erklaerungen in README.md. "Limit (800=aus)": Hoechstwert = kein Limit.
         # Quelle: ("venus", Pfad) | ("solakon", Schluessel) | ("reg", Adresse) |
         #         ("mode",) | ("essmode",) | ("eps",)
@@ -74,11 +81,12 @@ class EssSettings(object):
              ("solakon", "reservechargepower"), "W", 0, 0, 1200, 50, None),
             ("10_eps", "Notstrom-Ausgang", TYPE_DROPDOWN, ("eps",),
              EPS_LABELS, 0, 0, len(EPS_VALUES) - 1, 1, None),
-            ("11_peak_bezug", "Peak Shaving: Bezug (0=aus)", TYPE_NUMERIC,
-             ("venus", cg + "AcInputLimit"), "A", 1, 0, 63, 0.5, zero_off()),
-            ("12_peak_einspeisung", "Peak Shaving: Einsp. (0=aus)", TYPE_NUMERIC,
-             ("venus", cg + "AcExportLimit"), "A", 1, 0, 63, 0.5, zero_off()),
-            ("13_peak_immer", "Peak Shaving: immer aktiv", TYPE_TOGGLE,
+            # Peak Shaving (Victron: "Netzbezug begrenzen"). Die Einspeisegrenze
+            # AcExportLimit steht nicht im Menue, "Einspeisung: Limit" deckt das ab;
+            # der Regler beachtet sie trotzdem, falls sie gesetzt ist.
+            ("11_peak_bezug", "Max. Leistung: Netzbezug", TYPE_NUMERIC,
+             ("venus", cg + "AcInputLimit"), "W", 0, 0, 14490, 230, amps_as_watts()),
+            ("13_peak_immer", "Max. Leistung: bis Akkuschutz", TYPE_TOGGLE,
              ("venus", cg + "AlwaysPeakShave"), None, 0, 0, 1, 1, None),
             ("14_max_soc", "SoC: max. (Ladeende)", TYPE_NUMERIC, ("reg", 46610),
              "%", 0, 10, 100, 1, None),
@@ -87,6 +95,8 @@ class EssSettings(object):
             ("16_reserve", "SoC: Reserve (Netzbetrieb)", TYPE_NUMERIC, ("reg", 46611),
              "%", 0, 10, 100, 1, None),
             # Dynamic ESS: normalerweise von VRM gesetzt; -1 = nicht eingetragen
+            ("16b_dess_kapazitaet", "VRM-DESS: Akkukapazit\u00e4t", TYPE_NUMERIC,
+             ("venus", de + "BatteryCapacity"), "kWh", 1, 0, 50, 0.1, None),
             ("17_dess_laden", "VRM-DESS: max. Laden", TYPE_NUMERIC,
              ("venus", de + "BatteryChargeLimit"), "kW", 1, -1, 1.2, 0.1, None),
             ("18_dess_entladen", "VRM-DESS: max. Entladen", TYPE_NUMERIC,
