@@ -22,6 +22,11 @@ STATUS_OFF, STATUS_ON = 0x00, 0x09
 MODULE_CONNECTED = 0x100
 SETTINGS = "com.victronenergy.settings"
 EPS_VALUES = [0, 2, 3]      # 46613: aus, EPS, USV (1 ist im Protokoll nicht belegt)
+EPS_LABELS = ["Aus", "EPS (bei Netzausfall)", "USV (unterbrechungsfrei)"]
+MODE_VALUES = [3, 1, 2, 4]  # Venus /Mode: Ein, nur Ladegeraet, nur Wechselrichter, Aus
+MODE_LABELS = ["Ein: Venus regelt", "Nur laden", "Nur abgeben", "Aus: App regelt"]
+ESS_LABELS = ["Optimiert + BatteryLife", "Optimiert", "Akku voll halten",
+              "Extern (App, Zeitplan)"]       # Venus /Settings/Ess/Mode 0..3
 
 
 def unlimited(maxval):
@@ -41,48 +46,57 @@ class EssSettings(object):
         self.drv = drv
         cg = "/Settings/CGwacs/"
         de = "/Settings/DynamicEss/"
-        # (Kanal, Name, Typ, Quelle, Einheit, Nachkommastellen, min, max, Schritt, Umrechnung)
-        # Die Oberflaeche sortiert nach dem Namen; der Oberbegriff vorne haelt
-        # Zusammengehoeriges beisammen. Namen kurz halten (Kartenbreite).
-        # Grenzwerte: max. Einspeisung/Abgabe 800 und Netzladen 1200 = unbegrenzt,
-        # Peak 0 = aus, DESS -1 = nicht eingetragen.
-        # Quelle: ("venus", Pfad) | ("solakon", Schluessel) | ("reg", Adresse) | ("eps",)
+        # (Kanal, Name, Typ, Quelle, Einheit bzw. Auswahltexte, Nachkommastellen, min, max,
+        #  Schritt, Umrechnung)
+        # Die Oberflaeche sortiert nach dem Namen und zeigt nur ~30 Zeichen: Oberbegriff
+        # vorne (Betrieb, Einspeisung, Netzladen, Notstrom, Peak Shaving, SoC, VRM-DESS,
+        # WR-Abgabe), Erklaerungen in README.md. "Limit (800=aus)": Hoechstwert = kein Limit.
+        # Quelle: ("venus", Pfad) | ("solakon", Schluessel) | ("reg", Adresse) |
+        #         ("mode",) | ("essmode",) | ("eps",)
         self.outputs = [
-            ("01_netz_sollwert", "Netz: Sollwert", TYPE_NUMERIC, ("venus", cg + "AcPowerSetPoint"),
-             "W", 0, -800, 1200, 10, None),
-            ("02_einspeisung_aus", "Netz: Einspeisung verhindern", TYPE_TOGGLE,
+            ("01_betrieb", "Betrieb: An / Aus", TYPE_DROPDOWN, ("mode",),
+             MODE_LABELS, 0, 0, len(MODE_VALUES) - 1, 1, None),
+            ("02_essmodus", "Betrieb: ESS-Modus", TYPE_DROPDOWN, ("essmode",),
+             ESS_LABELS, 0, 0, len(ESS_LABELS) - 1, 1, None),
+            ("03_netz_sollwert", "Betrieb: Netz-Sollwert", TYPE_NUMERIC,
+             ("venus", cg + "AcPowerSetPoint"), "W", 0, -800, 1200, 10, None),
+            ("04_einspeisung_aus", "Einspeisung: verhindern", TYPE_TOGGLE,
              ("venus", cg + "PreventFeedback"), None, 0, 0, 1, 1, None),
-            ("02b_pv_ueberschuss", "Netz: PV-\u00dcberschuss einspeisen", TYPE_TOGGLE,
-             ("venus", cg + "OvervoltageFeedIn"), None, 0, 0, 1, 1, None),
-            ("03_max_einspeisung", "Netz: max. Einspeisung", TYPE_NUMERIC,
+            ("05_max_einspeisung", "Einspeisung: Limit (800=aus)", TYPE_NUMERIC,
              ("venus", cg + "MaxFeedInPower"), "W", 0, 0, 800, 10, unlimited(800)),
-            ("04_max_entladen", "Leistung: max. Abgabe", TYPE_NUMERIC,
-             ("venus", cg + "MaxDischargePower"), "W", 0, 0, 800, 10, unlimited(800)),
-            ("05_max_laden", "Leistung: max. Netzladen", TYPE_NUMERIC,
+            ("06_pv_ueberschuss", "Einspeisung: PV-\u00dcberschuss", TYPE_TOGGLE,
+             ("venus", cg + "OvervoltageFeedIn"), None, 0, 0, 1, 1, None),
+            ("07_max_laden", "Netzladen: Limit (1200=aus)", TYPE_NUMERIC,
              ("venus", cg + "MaxChargePower"), "W", 0, 0, 1200, 10, unlimited(1200)),
-            ("06_peak_bezug", "Peak: Netzbezug (0 = aus)", TYPE_NUMERIC,
-             ("venus", cg + "AcInputLimit"), "A", 1, 0, 63, 0.5, zero_off()),
-            ("07_peak_einspeisung", "Peak: Einspeisung (0 = aus)", TYPE_NUMERIC,
-             ("venus", cg + "AcExportLimit"), "A", 1, 0, 63, 0.5, zero_off()),
-            ("08_peak_immer", "Peak: auch unter Reserve", TYPE_TOGGLE,
-             ("venus", cg + "AlwaysPeakShave"), None, 0, 0, 1, 1, None),
-            ("09_ladeleistung", "Leistung: Geladen halten", TYPE_NUMERIC,
+            ("08_ladeleistung", "Netzladen: Akku voll halten", TYPE_NUMERIC,
              ("solakon", "chargepower"), "W", 0, 0, 1200, 50, None),
-            ("10_reserve_laden", "Leistung: Nachladen Reserve", TYPE_NUMERIC,
+            ("09_reserve_laden", "Netzladen: unter Reserve", TYPE_NUMERIC,
              ("solakon", "reservechargepower"), "W", 0, 0, 1200, 50, None),
-            ("11_max_soc", "Akku: max. SoC", TYPE_NUMERIC, ("reg", 46610), "%", 0, 10, 100, 1, None),
-            ("12_min_soc_phys", "Akku: min. SoC (Schutz)", TYPE_NUMERIC,
-             ("reg", 46609), "%", 0, 10, 100, 1, None),
-            ("13_eps", "Notstrom-Ausgang", TYPE_DROPDOWN, ("eps",), None, 0, 0, 2, 1, None),
+            ("10_eps", "Notstrom-Ausgang", TYPE_DROPDOWN, ("eps",),
+             EPS_LABELS, 0, 0, len(EPS_VALUES) - 1, 1, None),
+            ("11_peak_bezug", "Peak Shaving: Bezug (0=aus)", TYPE_NUMERIC,
+             ("venus", cg + "AcInputLimit"), "A", 1, 0, 63, 0.5, zero_off()),
+            ("12_peak_einspeisung", "Peak Shaving: Einsp. (0=aus)", TYPE_NUMERIC,
+             ("venus", cg + "AcExportLimit"), "A", 1, 0, 63, 0.5, zero_off()),
+            ("13_peak_immer", "Peak Shaving: immer aktiv", TYPE_TOGGLE,
+             ("venus", cg + "AlwaysPeakShave"), None, 0, 0, 1, 1, None),
+            ("14_max_soc", "SoC: max. (Ladeende)", TYPE_NUMERIC, ("reg", 46610),
+             "%", 0, 10, 100, 1, None),
+            ("15_min_soc_phys", "SoC: min. (Akkuschutz)", TYPE_NUMERIC, ("reg", 46609),
+             "%", 0, 10, 100, 1, None),
+            ("16_reserve", "SoC: Reserve (Netzbetrieb)", TYPE_NUMERIC, ("reg", 46611),
+             "%", 0, 10, 100, 1, None),
             # Dynamic ESS: normalerweise von VRM gesetzt; -1 = nicht eingetragen
-            ("14_dess_laden", "DESS: max. Laden", TYPE_NUMERIC,
+            ("17_dess_laden", "VRM-DESS: max. Laden", TYPE_NUMERIC,
              ("venus", de + "BatteryChargeLimit"), "kW", 1, -1, 1.2, 0.1, None),
-            ("15_dess_entladen", "DESS: max. Entladen", TYPE_NUMERIC,
+            ("18_dess_entladen", "VRM-DESS: max. Entladen", TYPE_NUMERIC,
              ("venus", de + "BatteryDischargeLimit"), "kW", 1, -1, 0.8, 0.1, None),
-            ("16_dess_bezug", "DESS: max. Netzbezug", TYPE_NUMERIC,
+            ("19_dess_bezug", "VRM-DESS: max. Netzbezug", TYPE_NUMERIC,
              ("venus", de + "GridImportLimit"), "kW", 1, -1, 50, 0.1, None),
-            ("17_dess_einspeisung", "DESS: max. Einspeisung", TYPE_NUMERIC,
+            ("20_dess_einspeisung", "VRM-DESS: max. Einspeisung", TYPE_NUMERIC,
              ("venus", de + "GridExportLimit"), "kW", 1, -1, 50, 0.1, None),
+            ("21_max_entladen", "WR-Abgabe: Limit (800=aus)", TYPE_NUMERIC,
+             ("venus", cg + "MaxDischargePower"), "W", 0, 0, 800, 10, unlimited(800)),
         ]
         s = self.s = service_factory("com.victronenergy.switch.solakon_ess", 91,
                                      "Solakon ESS-Einstellungen", "Solakon ESS")
@@ -109,8 +123,7 @@ class EssSettings(object):
                              ("Unit", unit), ("Decimals", dec)):
                     s.add_path(b + "Settings/" + k, v)
             if typ == TYPE_DROPDOWN:
-                s.add_path(b + "Settings/Labels", dbus.Array(["Aus", "EPS", "USV"],
-                                                             signature="s"))
+                s.add_path(b + "Settings/Labels", dbus.Array(unit, signature="s"))
             self.value_path[ch] = value_path
         self.by_ch = {o[0]: o for o in self.outputs}
 
@@ -135,6 +148,11 @@ class EssSettings(object):
         if src[0] == "eps":
             v = d.reg.g(46613) if d.reg.fresh("slow", 300) else None
             return EPS_VALUES.index(v) if v in EPS_VALUES else None
+        if src[0] == "mode":
+            v = int(d.settings["mode"])
+            return MODE_VALUES.index(v) if v in MODE_VALUES else None
+        if src[0] == "essmode":
+            return int(d.settings["essmode"])
         return None
 
     def refresh(self):
@@ -184,6 +202,10 @@ class EssSettings(object):
                 ok = d.set_soc_limit(src[1], raw)
             elif src[0] == "eps":
                 ok = d.set_eps(EPS_VALUES[int(raw)])
+            elif src[0] == "mode":
+                ok = d.ctl.set_mode(MODE_VALUES[int(raw)])
+            elif src[0] == "essmode":
+                ok = d.ctl.set_ess_mode(int(raw))
             else:
                 ok = False
         except dbus.exceptions.DBusException as e:
