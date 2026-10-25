@@ -70,7 +70,9 @@ class EssSettings(object):
         # vorne (Betrieb, Einspeisung, Max. Leistung, Netzladen, Notstrom, SoC, VRM-DESS,
         # WR-Abgabe; englisch Control, EPS, Feed-in, Grid charge, Inverter, Peak shaving, SoC,
         # VRM DESS, Inverter), Erklaerungen in README.md. "Limit (800=aus)": Hoechstwert =
-        # kein Limit.
+        # kein Limit. Der Netz-Sollwert hat keine eigene Grenze (Bereich wie in Venus,
+        # +-1 MW): Er zaehlt am Netzanschluss mit dem Hausverbrauch, die Geraetegrenzen
+        # 800/1200 W setzt der Regler.
         # Quelle: ("venus", Pfad) | ("solakon", Schluessel) | ("reg", Adresse) |
         #         ("mode",) | ("essmode",) | ("meter",) | ("eps",)
         self.outputs = [
@@ -81,7 +83,7 @@ class EssSettings(object):
             ("02b_netzzaehler", T("Betrieb: Netzz\u00e4hler", "Control: grid meter"), TYPE_DROPDOWN, ("meter",),
              meter_labels, 0, 0, len(meter_labels) - 1, 1, None),
             ("03_netz_sollwert", T("Betrieb: Netz-Sollwert", "Control: grid setpoint"), TYPE_NUMERIC,
-             ("venus", cg + "AcPowerSetPoint"), "W", 0, -800, 1200, 10, None),
+             ("venus", cg + "AcPowerSetPoint"), "W", 0, -1000000, 1000000, 10, None),
             ("04_einspeisung_aus", T("Einspeisung: verhindern", "Feed-in: prevent"), TYPE_TOGGLE,
              ("venus", cg + "PreventFeedback"), None, 0, 0, 1, 1, None),
             ("05_max_einspeisung", T("Einspeisung: Limit (800=aus)", "Feed-in: limit (800=off)"), TYPE_NUMERIC,
