@@ -302,9 +302,10 @@ class Control(object):
             self.reserve_active = False
         elif soc <= reserve - 2:
             self.reserve_active = True
+        # Nachladen an der Reserve ist eine Untergrenze: verlangt der Sollwert mehr, gilt der
+        reserve_w = 0
         if self.reserve_active and grid_charge_ok:
-            w = min(charge_w, int(self.settings["reservechargepower"]))
-            return "netz", w, "Reserve %d %% nachladen mit %d W" % (reserve, w)
+            reserve_w = min(charge_w, int(self.settings["reservechargepower"]))
 
         setpoint = self.grid_setpoint(m)
         # Verbrauch hinter dem Zaehler = Netz + Solakon-Abgabe; davon bleibt der Sollwert am Netz
@@ -323,9 +324,12 @@ class Control(object):
         if self.req["/Ess/DisableCharge"]:
             want = max(want, min(m["pv"], export_max))
 
-        if want < -GRID_CHARGE_START_W and grid_charge_ok and soc < m["maxsoc"]:
+        if want < -GRID_CHARGE_START_W and grid_charge_ok and soc < m["maxsoc"] \
+                and -want > reserve_w:
             w = int(min(-want, charge_w))
             return "netz", w, "Netzladen %d W (Sollwert %d W)" % (w, setpoint)
+        if reserve_w:
+            return "netz", reserve_w, "Reserve %d %% nachladen mit %d W" % (reserve, reserve_w)
         if not feed_ok:
             return "abgabe", 0, "Nur Ladegeraet: keine Abgabe"
         if soc <= reserve and not self.req["/Ess/DisableCharge"]:
