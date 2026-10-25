@@ -94,8 +94,6 @@ class EssSettings(object):
              ("venus", cg + "MaxChargePower"), "W", 0, 0, 1200, 10, unlimited(1200)),
             ("08_ladeleistung", T("Netzladen: Akku voll halten", "Grid charge: keep charged"), TYPE_NUMERIC,
              ("solakon", "chargepower"), "W", 0, 0, 1200, 50, None),
-            ("09_reserve_laden", T("Netzladen: unter Reserve", "Grid charge: below reserve"), TYPE_NUMERIC,
-             ("solakon", "reservechargepower"), "W", 0, 0, 1200, 50, None),
             ("10_eps", T("Notstrom-Ausgang", "EPS output"), TYPE_DROPDOWN, ("eps",),
              eps_labels, 0, 0, len(EPS_VALUES) - 1, 1, None),
             # Peak Shaving (Victron: "Netzbezug begrenzen"). Die Einspeisegrenze

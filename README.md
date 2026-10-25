@@ -90,7 +90,6 @@ Bei einem Multi RS blendet Venus das ESS-Menü aus (*Einstellungen → ESS* zeig
 | **Einspeisung: PV-Überschuss** | Ein = bei vollem Akku die Solarleistung ins Netz abgeben (bis Limit/800 W). Aus = Abgabe nur bis zum Hausverbrauch, der Rest wird an den Modulen abgeregelt. Victron: „DC-gekoppelte PV: Überschuss einspeisen“. | `OvervoltageFeedIn` |
 | **Netzladen: Limit (1200=aus)** | Höchstens so viel Watt aus dem Netz in den Akku, gilt für alle Fälle. 1200 = kein Limit. | `MaxChargePower` |
 | **Netzladen: Akku voll halten** | Ladeleistung im ESS-Modus „Akku voll halten“. | `/Settings/Solakon/ChargePower` |
-| **Netzladen: unter Reserve** | Ladeleistung, wenn der Akku 2 % unter die Reserve fällt. | `/Settings/Solakon/ReserveChargePower` |
 | **Notstrom-Ausgang** | *Aus*. *EPS*: schaltet nur bei Netzausfall ein. *USV*: unterbrechungsfrei, immer versorgt. Die Last zählt mit zu den 800 W. | Register 46613 |
 | **Max. Leistung: Netzbezug** | Peak Shaving: Netzbezug des ganzen Hauses höchstens so viele Watt (Summe aller Phasen, gespeichert als A × 230 V, Schritte zu 230 W). Darüber gibt der Akku zusätzlich ab (bis 800 W), Netzladen wird gedrosselt. 0 = aus. | `AcInputLimit` |
 | **Max. Leistung: bis Akkuschutz** | Aus = die Netzbezugsgrenze gilt nur, solange der Akku über der Reserve ist. Ein = bis hinunter zum Akkuschutz-SoC. | `AlwaysPeakShave` |
@@ -116,7 +115,7 @@ Der Treiber übernimmt die Rolle der Multi-RS-Firmware. Venus gibt über das AC-
 | Gerätemodus **Nur Ladegerät** | keine Abgabe |
 | Gerätemodus **Nur Wechselrichter** | kein Laden aus dem Netz |
 | Gerätemodus **Aus** | App-Freigabe: Fernsteuerung aus, die Hersteller-App steuert (das Gerät wird nicht ausgeschaltet) |
-| ESS **Optimiert** (mit/ohne BatteryLife) | Netz auf den Sollwert regeln; unter der Reserve nur PV, 2 % darunter Nachladen mit `ReserveChargePower`. BatteryLife: Grenze +5 % je Tag ohne Volladung, −5 % bei Volladung, max. 80 % |
+| ESS **Optimiert** (mit/ohne BatteryLife) | Netz auf den Sollwert regeln; unter der Reserve nur PV, 2 % darunter langsames Nachladen aus dem Netz (wie Victron, nicht im Menü: `/Settings/Solakon/ReserveChargePower`, Standard 300 W, höchstens „Netzladen: Limit“). BatteryLife: Grenze +5 % je Tag ohne Volladung, −5 % bei Volladung, max. 80 % |
 | ESS **Akkus geladen halten** | Netzladen mit `ChargePower` bis Max-SoC (2 % Hysterese); bei vollem Akku deckt die PV das Haus (ohne Entladen), Überschuss je nach „PV-Überschuss einspeisen“ |
 | ESS **Externe Steuerung** | App-Freigabe, solange niemand `/Ess/UseInverterPowerSetpoint` setzt |
 | Ladezeitpläne, Dynamic ESS | nativ: Venus setzt Sollwerte/Sperren, der Treiber führt sie aus |
