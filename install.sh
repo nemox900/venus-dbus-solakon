@@ -111,6 +111,7 @@ else
 		*) pt=$POWERTRACKER_HOST ;;
 	esac
 fi
+[ -n "$sol" ] || { say "keine IP-Adresse fuer das Solakon angegeben (interaktiv oder SOLAKON_HOST=<ip>)"; exit 1; }
 ini_set solakon host "$sol"
 ini_set powertracker host "$pt"
 say "Solakon: $sol"
