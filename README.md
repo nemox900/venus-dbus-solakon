@@ -142,3 +142,6 @@ Nicht möglich bzw. nicht tun:
 - keine Fernkonfiguration wie bei Victron-Geräten (VictronConnect Remote, VEConfigure)
 - Venus-Firmware nur nach Prüfung aktualisieren (AutoUpdate auf „nur prüfen“); `/data` mit dem Mod bleibt dabei erhalten
 
+## Lizenz
+
+MIT, siehe [LICENSE](LICENSE). Kein offizielles Produkt von Solakon oder Victron Energy. Nutzung auf eigenes Risiko: Der Treiber schreibt im Steuerbetrieb Register des Speichers.
